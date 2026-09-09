@@ -1,3 +1,4 @@
+// Aktualizace pro Vercel
 import { useState, useEffect } from 'react'
 import { supabase } from './supabase'
 
