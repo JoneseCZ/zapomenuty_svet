@@ -1,178 +1,188 @@
-// Aktualizace pro Vercel
-import { useState, useEffect } from 'react'
-import { supabase } from './supabase'
+import React, { useState } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+// Inicializace Supabase (použijeme tvé proměnné nebo stávající nastavení)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [isRegistering, setIsRegistering] = useState(false)
-  const [username, setUsername] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState('')
+  const [isLogin, setIsLogin] = useState(true);
+  const [isReset, setIsReset] = useState(false);
+  const [characterName, setCharacterName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-    })
+  // Funkce pro přihlášení, registraci a obnovu
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  async function handleRegister(e) {
-    e.preventDefault()
-    setLoading(true)
-    setMessage('')
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { username } }
-    })
-
-    if (error) {
-      setMessage('Chyba registrace: ' + error.message)
-    } else {
-      setMessage('Registrace úspěšná! Nyní se můžeš přihlásit.')
-      setIsRegistering(false)
+    try {
+      if (isReset) {
+        // Obnova hesla přes e-mail
+        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        if (error) throw error;
+        setMessage('Odkaz pro obnovení hesla byl odeslán na váš e-mail.');
+      } else if (isLogin) {
+        // Přihlášení: Supabase standardně vyžaduje email, takže si jméno postavy 
+        // mapujeme na skrytý/interní e-mail, nebo se přihlašujeme napřímo.
+        // Zde předpokládáme, že uživatel zadá jméno postavy do pole "characterName".
+        // Propojení s reálným e-mailem v Supabase Auth vyžaduje trik, 
+        // nejjednodušší je uložit jméno postavy do tabulky profilů.
+        const fakeEmail = `${characterName.trim().toLowerCase()}@zapomenutysvet.cz`;
+        const { error } = await supabase.auth.signInWithPassword({
+          email: fakeEmail,
+          password,
+        });
+        if (error) throw error;
+        setMessage('Úspěšně přihlášeno!');
+      } else {
+        // Registrace nového hráče
+        const fakeEmail = `${characterName.trim().toLowerCase()}@zapomenutysvet.cz`;
+        const { error } = await supabase.auth.signUp({
+          email: fakeEmail,
+          password,
+          options: {
+            data: { character_name: characterName, recovery_email: email }
+          }
+        });
+        if (error) throw error;
+        setMessage('Registrace proběhla úspěšně! Nyní se můžete přihlásit.');
+      }
+    } catch (err) {
+      setMessage(`Chyba: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false)
-  }
-
-  async function handleLogin(e) {
-    e.preventDefault()
-    setLoading(true)
-    setMessage('')
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setMessage('Chyba přihlášení: ' + error.message)
-    }
-    setLoading(false)
-  }
-
-  if (session) {
-    return (
-      <div className="min-h-screen bg-stone-900 text-stone-100 p-8 font-sans">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex justify-between items-center mb-6 border-b border-stone-700 pb-4">
-            <h1 className="text-3xl font-bold text-amber-500">
-              Zapomenutý svět — Hlavní stan
-            </h1>
-            <button
-              onClick={() => supabase.auth.signOut()}
-              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm transition"
-            >
-              Odhlásit se
-            </button>
-          </div>
-          <p className="text-stone-300">Vítej ve hře, skaute!</p>
-        </div>
-      </div>
-    )
-  }
+  };
 
   return (
     <div 
-      className="min-h-screen bg-cover bg-center flex flex-col items-center justify-center p-4 relative font-serif"
+      className="relative flex items-center justify-center min-h-screen w-full bg-cover bg-center px-4"
       style={{ backgroundImage: `url('/mapa-pozadi.jpg')` }}
     >
-      {/* Jemné zatmavení mapy pro lepší čitelnost */}
-      <div className="absolute inset-0 bg-black/30"></div>
+      {/* Kontejner svitku s reálným pozadím */}
+      <div 
+        className="relative w-full max-w-md p-8 sm:p-12 bg-cover bg-center shadow-2xl rounded-lg text-amber-950 flex flex-col justify-between"
+        style={{ 
+          backgroundImage: `url('/svitek-pozadi.png')`,
+          minHeight: '520px'
+        }}
+      >
+        {/* Logo / Nadpis */}
+        <div className="flex flex-col items-center mb-6 pt-4">
+          <img 
+            src="/nadpis-logo.png" 
+            alt="Zapomenutý svět" 
+            className="w-48 sm:w-60 object-contain drop-shadow-md"
+            onError={(e) => { e.target.style.display = 'none'; }} 
+          />
+          <h1 className="text-2xl font-bold font-serif tracking-wide text-amber-900 mt-2">
+            {isReset ? 'Obnova hesla' : isLogin ? 'Vstup do hry' : 'Nová postava'}
+          </h1>
+        </div>
 
-      {/* Vypálený nápis jako obrázek */}
-      <img 
-        src="/nadpis-logo.png" 
-        alt="Zapomenutý svět" 
-        className="relative z-10 w-72 md:w-96 mb-6 drop-shadow-[0_4px_6px_rgba(0,0,0,0.7)] select-none"
-      />
-
-      {/* Poloprůsvitný svitek */}
-      <div className="relative z-10 w-full max-w-md bg-[#f4ebd0]/85 backdrop-blur-md text-[#3e2723] p-8 rounded-xl shadow-2xl border-4 border-[#8c5830]/80">
-        
+        {/* Chybové / Informační hlášení */}
         {message && (
-          <div className="mb-4 p-3 bg-[#e6d5b8]/90 border border-[#a47551] text-sm text-center rounded text-[#4a2e18]">
+          <div className="mb-4 p-3 bg-amber-900/10 border border-amber-800/30 rounded text-sm text-center font-medium">
             {message}
           </div>
         )}
 
-        <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
-          {isRegistering && (
+        {/* Formulář */}
+        <form onSubmit={handleAuth} className="flex flex-col gap-4 my-auto">
+          {!isReset && (
             <div>
-              <label className="block text-sm font-bold mb-1 text-[#4a2e18]">Skautské jméno / Přezdívka</label>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1 text-amber-900">
+                Jméno postavy
+              </label>
               <input
                 type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
                 required
-                className="w-full px-3 py-2 bg-[#fdfbf7]/80 border border-[#b08d57] rounded text-[#3e2723] focus:outline-none focus:ring-2 focus:ring-[#8c5830]"
-                placeholder="např. Jezevec"
+                value={characterName}
+                onChange={(e) => setCharacterName(e.target.value)}
+                placeholder="Zadejte jméno hrdiny"
+                className="w-full px-3 py-2 bg-amber-50/60 border border-amber-900/40 rounded focus:outline-none focus:ring-2 focus:ring-amber-800 text-amber-950 placeholder-amber-900/40"
               />
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-bold mb-1 text-[#4a2e18]">E-mail</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-3 py-2 bg-[#fdfbf7]/80 border border-[#b08d57] rounded text-[#3e2723] focus:outline-none focus:ring-2 focus:ring-[#8c5830]"
-              placeholder="vas@email.cz"
-            />
-          </div>
+          {(isReset || !isLogin) && (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1 text-amber-900">
+                E-mail {isLogin ? '' : '(pro případ obnovy hesla)'}
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="vas@email.cz"
+                className="w-full px-3 py-2 bg-amber-50/60 border border-amber-900/40 rounded focus:outline-none focus:ring-2 focus:ring-amber-800 text-amber-950 placeholder-amber-900/40"
+              />
+            </div>
+          )}
 
-          <div>
-            <label className="block text-sm font-bold mb-1 text-[#4a2e18]">Heslo</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full px-3 py-2 bg-[#fdfbf7]/80 border border-[#b08d57] rounded text-[#3e2723] focus:outline-none focus:ring-2 focus:ring-[#8c5830]"
-              placeholder="••••••••"
-            />
-          </div>
+          {!isReset && (
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider mb-1 text-amber-900">
+                Heslo
+              </label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-3 py-2 bg-amber-50/60 border border-amber-900/40 rounded focus:outline-none focus:ring-2 focus:ring-amber-800 text-amber-950 placeholder-amber-900/40"
+              />
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#8c5830] hover:bg-[#6b4221] text-[#f4ebd0] font-bold py-3 rounded shadow transition duration-200 border border-[#5c4033]"
+            className="w-full mt-2 py-3 bg-[#8b5a2b] hover:bg-[#704822] text-amber-100 font-bold rounded shadow-md transition-colors uppercase tracking-wider text-sm border border-amber-950/30"
           >
-            {loading ? 'Zpracovávám...' : (isRegistering ? 'Zaregistrovat se' : 'Vstoupit do hry')}
+            {loading ? 'Pracuji...' : isReset ? 'Odeslat odkaz' : isLogin ? 'Vstoupit do hry' : 'Zaregistrovat postavu'}
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm">
-          {isRegistering ? (
-            <p>
-              Už máš svůj účet?{' '}
-              <button 
-                onClick={() => setIsRegistering(false)} 
-                className="text-[#8c5830] font-bold underline hover:text-[#4a2e18]"
-              >
-                Přihlásit se
-              </button>
-            </p>
+        {/* Dolní přepínání (Registrace / Obnova hesla / Zpět) */}
+        <div className="flex justify-between items-center text-xs font-semibold pt-6 border-t border-amber-900/20 mt-4">
+          {isReset ? (
+            <button 
+              type="button"
+              onClick={() => { setIsReset(false); setIsLogin(true); }}
+              className="text-amber-900 hover:underline mx-auto"
+            >
+              ← Zpět na přihlášení
+            </button>
           ) : (
-            <p>
-              Ještě tu nejsi?{' '}
+            <>
               <button 
-                onClick={() => setIsRegistering(true)} 
-                className="text-[#8c5830] font-bold underline hover:text-[#4a2e18]"
+                type="button"
+                onClick={() => { setIsLogin(!isLogin); }}
+                className="text-amber-900 hover:underline"
               >
-                Zaregistrovat se
+                {isLogin ? 'Vytvořit novou postavu' : 'Již mám postavu'}
               </button>
-            </p>
+              
+              <button 
+                type="button"
+                onClick={() => { setIsReset(true); }}
+                className="text-amber-900 hover:underline"
+              >
+                Zapomenuté heslo?
+              </button>
+            </>
           )}
         </div>
-
       </div>
     </div>
-  )
+  );
 }
