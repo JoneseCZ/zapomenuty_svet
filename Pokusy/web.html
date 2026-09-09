@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zapomenutý svět</title>
+    <!-- Načtení Supabase klienta -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root {
+            --bg-dark: #0b0f19;
+            --panel-bg: #111827;
+            --border-color: #1f2937;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --recipe-gold: #d97706;
+            --success: #16a34a;
+            --danger: #dc2626;
+            --primary: #2563eb;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .hidden { display: none !important; }
+
+        input, select, textarea {
+            background: #0f172a;
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+
+        .game-header {
+            text-align: center;
+            margin-bottom: 25px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+        }
+        .game-header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2rem;
+            letter-spacing: 1px;
+            color: #fbbf24;
+        }
+        .user-info-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+        .user-info-left, .user-info-right {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .badge {
+            background: var(--border-color);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--text-main);
+        }
+        .badge-admin { background: #b91c1c; }
+
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+        .nav-tab-btn {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .nav-tab-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .page-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 25px;
+            min-height: 400px;
+        }
+
+        #login-container {
+            max-width: 400px;
+            margin: 80px auto;
+            background: var(--panel-bg);
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+
+        <!-- 1. PŘIHLAŠOVACÍ FORMULÁŘ -->
+        <div id="login-container">
+            <h2 style="text-align: center; margin-top: 0; color: #fbbf24;">Zapomenutý svět</h2>
+            <p id="auth-mode-title" style="text-align: center; color: var(--text-muted); font-size: 0.9rem;">Přihlaste se do hry</p>
+            
+            <input type="text" id="auth-username" placeholder="Jméno postavy">
+            <input type="email" id="auth-email" placeholder="E-mail (pro případ zapomenutí hesla)" class="hidden">
+            <input type="password" id="auth-password" placeholder="Heslo">
+            
+            <button onclick="provedAutentizaci()" id="auth-submit-btn" style="width: 100%; margin-top: 10px;">Přihlásit se</button>
+            <p id="auth-msg" style="font-size: 0.85rem; text-align: center; margin-top: 10px;"></p>
+            
+            <div style="text-align: center; margin-top: 15px; font-size: 0.85rem;">
+                <a href="#" onclick="prepnoutRezimAuth()" id="auth-switch-link" style="color: var(--primary); text-decoration: none;">Nemáte postavu? Zaregistrujte se</a>
+            </div>
+        </div>
+
+        <!-- 2. HLAVNÍ HERNÍ ROZHRANÍ -->
+        <div id="game-interface" class="hidden">
+            
+            <div class="game-header">
+                <h1>Zapomenutý svět</h1>
+                <div class="user-info-bar">
+                    <div class="user-info-left">
+                        <span>Hráč: <strong id="ui-username" style="color: var(--text-main);">Neznámý</strong></span>
+                        <span class="badge" id="ui-status">Hráč</span>
+                    </div>
+                    <div class="user-info-right">
+                        <button onclick="odhlasitSe()" style="background: var(--danger); padding: 5px 10px; font-size: 0.8rem;">Odhlásit se</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="nav-container" style="display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap;"></div>
+            <div id="panels-container"></div>
+
+        </div>
+
+    </div>
+
+    <!-- JAVASCRIPT LOGIKA -->
+    <script>
+        const SUPABASE_URL = 'https://jvqkogzqraxfhasecvxh.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2cWtvZ3pxcmF4Zmhhc2VjdnhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1MDU4OTQsImV4cCI6MjEwNDA4MTg5NH0.xlZN6yGUUQebb0zqMhel_C7P3e6sDXhj2EOl0r74IaU';
+        
+        window.dbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let aktualniUzivatel = null;
+        let isAdmin = false;
+        let jeRegistraceRezim = false;
+
+        function prepnoutRezimAuth() {
+            jeRegistraceRezim = !jeRegistraceRezim;
+            const emailInput = document.getElementById('auth-email');
+            
+            if (jeRegistraceRezim) {
+                document.getElementById('auth-mode-title').textContent = 'Vytvořit novou postavu';
+                document.getElementById('auth-submit-btn').textContent = 'Zaregistrovat postavu';
+                document.getElementById('auth-switch-link').textContent = 'Již máte postavu? Přihlaste se';
+                emailInput.classList.remove('hidden');
+            } else {
+                document.getElementById('auth-mode-title').textContent = 'Přihlaste se do hry';
+                document.getElementById('auth-submit-btn').textContent = 'Přihlásit se';
+                document.getElementById('auth-switch-link').textContent = 'Nemáte postavu? Zaregistrujte se';
+                emailInput.classList.add('hidden');
+            }
+            document.getElementById('auth-msg').textContent = '';
+        }
+
+        async function provedAutentizaci() {
+            const rawUsername = document.getElementById('auth-username').value.trim();
+            const password = document.getElementById('auth-password').value.trim();
+            const msgEl = document.getElementById('auth-msg');
+
+            if (!rawUsername || !password) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Vyplňte jméno postavy i heslo.';
+                return;
+            }
+
+            if (jeRegistraceRezim) {
+                const email = document.getElementById('auth-email').value.trim();
+                if (!email) {
+                    msgEl.style.color = 'var(--danger)';
+                    msgEl.textContent = 'Pro registraci je nutné zadat e-mail.';
+                    return;
+                }
+
+                const { data: existingProfile } = await window.dbClient
+                    .from('profiles')
+                    .select('username')
+                    .ilike('username', rawUsername)
+                    .maybeSingle();
+
+                if (existingProfile) {
+                    msgEl.style.color = 'var(--danger)';
+                    msgEl.textContent = 'Toto jméno postavy už je obsazené. Zvolte jiné.';
+                    return;
+                }
+
+                const { data, error } = await window.dbClient.auth.signUp({ 
+                    email: email, 
+                    password: password 
+                });
+
+                if (error) {
+                    msgEl.style.color = 'var(--danger)';
+                    msgEl.textContent = 'Chyba registrace: ' + error.message;
+                    return;
+                }
+
+                if (data.user) {
+                    const { error: profileError } = await window.dbClient.from('profiles').upsert({
+                        id: data.user.id,
+                        username: rawUsername,
+                        email: email,
+                        is_admin: false
+                    });
+
+                    if (profileError) {
+                        msgEl.style.color = 'var(--danger)';
+                        msgEl.textContent = 'Chyba při vytváření profilu: ' + profileError.message;
+                        return;
+                    }
+                }
+
+                msgEl.style.color = 'var(--success)';
+                msgEl.textContent = 'Postava úspěšně vytvořena! Nyní se můžete přihlásit.';
+                prepnoutRezimAuth();
+
+            } else {
+                const { data: profileData, error: profileError } = await window.dbClient
+                    .from('profiles')
+                    .select('email')
+                    .ilike('username', rawUsername)
+                    .maybeSingle();
+
+                if (profileError || !profileData || !profileData.email) {
+                    msgEl.style.color = 'var(--danger)';
+                    msgEl.textContent = 'Postava s tímto jménem nebyla nalezena.';
+                    return;
+                }
+
+                const { data, error } = await window.dbClient.auth.signInWithPassword({ 
+                    email: profileData.email, 
+                    password: password 
+                });
+
+                if (error) {
+                    msgEl.style.color = 'var(--danger)';
+                    msgEl.textContent = 'Nesprávné jméno nebo heslo.';
+                } else {
+                    zpracujPrihlaseniUzivatele(data.user);
+                }
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const { data: { session } } = await window.dbClient.auth.getSession();
+            if (session && session.user) {
+                zpracujPrihlaseniUzivatele(session.user);
+            }
+        });
+
+        async function zmenitHesloHrace(inputId = 'new-password-input', msgId = 'password-msg') {
+            const noveHeslo = document.getElementById(inputId).value.trim();
+            const msgEl = document.getElementById(msgId);
+
+            if (!noveHeslo || noveHeslo.length < 6) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Nové heslo musí mít alespoň 6 znaků.';
+                return;
+            }
+
+            const { error } = await window.dbClient.auth.updateUser({ password: noveHeslo });
+
+            if (error) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Chyba při změně hesla: ' + error.message;
+            } else {
+                msgEl.style.color = 'var(--success)';
+                msgEl.textContent = 'Heslo bylo úspěšně změněno!';
+                document.getElementById(inputId).value = '';
+            }
+        }
+
+        async function zpracujPrihlaseniUzivatele(user) {
+            aktualniUzivatel = user;
+            document.getElementById('login-container').classList.add('hidden');
+            document.getElementById('game-interface').classList.remove('hidden');
+
+            const { data: profile } = await window.dbClient
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .maybeSingle();
+
+            const hracJmeno = (profile && profile.username) ? profile.username : 'Neznámý hrdina';
+            document.getElementById('ui-username').textContent = hracJmeno;
+
+            if (profile && (profile.is_admin === true || profile.is_admin === 'true' || profile.is_admin === 1)) {
+                isAdmin = true;
+                document.getElementById('ui-status').textContent = 'ADMINISTRÁTOR';
+                document.getElementById('ui-status').classList.add('badge-admin');
+                aktivovatAdminRozhrani();
+            } else {
+                isAdmin = false;
+                document.getElementById('ui-status').textContent = 'Hráč';
+                aktivovatHracskeRozhrani();
+            }
+        }
+
+        async function odhlasitSe() {
+            await window.dbClient.auth.signOut();
+            window.location.reload();
+        }
+
+        // --- UNIVERZÁLNÍ PŘEPÍNAČ PRO HRÁČE ---
+        function prepnoutStranku(stranka) {
+            document.querySelectorAll('#panels-container .page-panel').forEach(p => p.classList.add('hidden'));
+            document.querySelectorAll('#nav-container .nav-tab-btn').forEach(b => b.classList.remove('active'));
+
+            const panel = document.getElementById(`page-${stranka}`);
+            const btn = document.getElementById(`btn-tab-${stranka}`);
+            if (panel) panel.classList.remove('hidden');
+            if (btn) btn.classList.add('active');
+
+            if (stranka === 'chat') {
+                nactiChatZpravy();
+            }
+        }
+
+        // --- UNIVERZÁLNÍ PŘEPÍNAČ PRO ADMINA ---
+        function prepnoutStrankuAdmin(stranka) {
+            document.querySelectorAll('#panels-container .page-panel').forEach(p => p.classList.add('hidden'));
+            document.querySelectorAll('#nav-container .nav-tab-btn').forEach(b => b.classList.remove('active'));
+
+            const panel = document.getElementById(`page-admin-${stranka}`);
+            const btn = document.getElementById(`btn-tab-admin-${stranka}`);
+            if (panel) panel.classList.remove('hidden');
+            if (btn) btn.classList.add('active');
+
+            if (stranka === 'chat') {
+                nactiAdminChatZpravy();
+            } else if (stranka === 'hraci') {
+                nactiAdminHraceARecepty();
+            } else if (stranka === 'nastenka') {
+                nactiAdminNastenkuData();
+            } else if (stranka === 'recepty') {
+                nactiAdminVsechnyRecepty();
+            }
+        }
+
+        // --- HRÁČSKÉ ROZHRANÍ ---
+        function aktivovatHracskeRozhrani() {
+            document.getElementById('nav-container').innerHTML = `
+                <button id="btn-tab-recepty" class="nav-tab-btn active" onclick="prepnoutStranku('recepty')">📜 Recepty</button>
+                <button id="btn-tab-inventar" class="nav-tab-btn" onclick="prepnoutStranku('inventar')">🎒 Inventář</button>
+                <button id="btn-tab-nastenka" class="nav-tab-btn" onclick="prepnoutStranku('nastenka')">📌 Nástěnka</button>
+                <button id="btn-tab-nastaveni" class="nav-tab-btn" onclick="prepnoutStranku('nastaveni')">⚙️ Nastavení</button>
+                <button id="btn-tab-chat" class="nav-tab-btn" onclick="prepnoutStranku('chat')">💬 Chat</button>
+            `;
+            
+            document.getElementById('panels-container').innerHTML = `
+                <div id="page-recepty" class="page-panel">
+                    <h2>Moje recepty</h2>
+                    <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+                        <input type="text" id="secret-code-input" placeholder="Zadejte tajný kód receptu...">
+                        <button onclick="odemknoutRecept()">Odemknout</button>
+                    </div>
+                    <p id="recipe-msg" style="font-size: 0.9rem; margin-bottom: 10px;"></p>
+                    <ul id="recipe-list" style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px;"></ul>
+                    <ul id="recipe-detail-container" style="margin-top: 15px;"></ul>
+                </div>
+
+                <div id="page-inventar" class="page-panel hidden">
+                    <h2>Inventář postavy</h2>
+                    <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+                        <input type="text" id="new-item-name" placeholder="Název předmětu...">
+                        <input type="number" id="new-item-qty" value="1" min="1" style="width: 70px;">
+                        <button onclick="pridatDoInventare()">Přidat požadavek</button>
+                    </div>
+                    <p id="inventory-msg" style="font-size: 0.9rem; margin-bottom: 10px;"></p>
+                    <ul id="inventory-list" style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px;"></ul>
+                </div>
+
+                <div id="page-nastenka" class="page-panel hidden">
+                    <h2>Nástěnka událostí</h2>
+                    <div id="quests-list" style="display: flex; flex-direction: column; gap: 12px; margin-top: 15px;"></div>
+                </div>
+
+                <div id="page-nastaveni" class="page-panel hidden">
+                    <h2>Nastavení účtu</h2>
+                    <div style="background: #111827; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; max-width: 400px;">
+                        <h3>Změna hesla</h3>
+                        <input type="password" id="new-password-input" placeholder="Nové heslo (min. 6 znaků)" style="width: 100%; margin-bottom: 10px;">
+                        <button onclick="zmenitHesloHrace('new-password-input', 'password-msg')" style="width: 100%;">Změnit heslo</button>
+                        <p id="password-msg" style="margin-top: 10px; font-size: 0.9rem;"></p>
+                    </div>
+                </div>
+
+                <div id="page-chat" class="page-panel hidden">
+                    <h2>Herní chat / Fórum</h2>
+                    <div style="display: flex; flex-direction: column; height: 450px; background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-top: 15px;">
+                        <div id="chat-messages-list" style="flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;"></div>
+                        <div style="padding: 10px; background: #111827; border-top: 1px solid var(--border-color); display: flex; gap: 10px;">
+                            <input type="text" id="chat-input" placeholder="Napište zprávu ostatním..." style="flex: 1; margin-bottom: 0;" onkeydown="if(event.key==='Enter') odeslatChatZpravu()">
+                            <button onclick="odeslatChatZpravu()">Odeslat</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            nactiSeznamReceptu();
+            nactiInventar();
+            nactiNastenkaHrace();
+            nactiChatZpravy();
+        }
+
+        // --- ADMIN ROZHRANÍ ---
+        function aktivovatAdminRozhrani() {
+            document.getElementById('nav-container').innerHTML = `
+                <button id="btn-tab-admin-nastenka" class="nav-tab-btn active" onclick="prepnoutStrankuAdmin('nastenka')">📌 Nástěnka</button>
+                <button id="btn-tab-admin-recepty" class="nav-tab-btn" onclick="prepnoutStrankuAdmin('recepty')">📜 Všechny recepty</button>
+                <button id="btn-tab-admin-hraci" class="nav-tab-btn" onclick="prepnoutStrankuAdmin('hraci')">👥 Hráči a recepty</button>
+                <button id="btn-tab-admin-chat" class="nav-tab-btn" onclick="prepnoutStrankuAdmin('chat')">💬 Moderování chatu</button>
+                <button id="btn-tab-admin-nastaveni" class="nav-tab-btn" onclick="prepnoutStrankuAdmin('nastaveni')">⚙️ Nastavení</button>
+            `;
+
+            document.getElementById('panels-container').innerHTML = `
+                <div id="page-admin-nastenka" class="page-panel">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h2 style="margin: 0;">Administrace nástěnky</h2>
+                        <button onclick="toggleAdminPrehledPrecteni()" style="background: #2196F3; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">
+                            📊 Kdo co četl
+                        </button>
+                    </div>
+
+                    <div id="admin-prehled-tabulka-wrapper" style="display: none; margin-bottom: 20px; background: #111827; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <h3 style="margin-top: 0; font-size: 16px; color: white;">Přehled přečtení všech úkolů</h3>
+                        <div id="admin-prehled-obsah">Načítám data...</div>
+                    </div>
+
+                    <div style="background: #111827; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <input type="text" id="admin-quest-title" placeholder="Název události..." style="width: 100%; margin-bottom: 10px;">
+                        <textarea id="admin-quest-desc" placeholder="Popis události..." style="width: 100%; height: 80px; margin-bottom: 10px; background: #0b0f19; color: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;"></textarea>
+                        <input type="text" id="admin-quest-reward" placeholder="Odměna (nepovinné)..." style="width: 100%; margin-bottom: 10px;">
+                        <button onclick="adminPridatUdalost()">Zveřejnit na nástěnce</button>
+                        <p id="admin-quest-msg" style="margin-top: 8px; font-size: 0.9rem;"></p>
+                    </div>
+                    <h3>Aktivní události</h3>
+                    <div id="admin-quests-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;"></div>
+                </div>
+
+                <div id="page-admin-recepty" class="page-panel hidden">
+                    <h2>Seznam všech receptů v databázi</h2>
+                    <div id="admin-all-recipes-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;"></div>
+                </div>
+
+                <div id="page-admin-hraci" class="page-panel hidden">
+                    <h2>Přehled hráčů a jejich receptů</h2>
+                    <div id="admin-players-recipes-list" style="display: flex; flex-direction: column; gap: 15px; margin-top: 15px;"></div>
+                </div>
+
+                <div id="page-admin-chat" class="page-panel hidden">
+                    <h2>Moderování herního chatu</h2>
+                    <div style="display: flex; flex-direction: column; background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-top: 15px;">
+                        <div id="admin-chat-messages-list" style="height: 350px; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #020617;"></div>
+                        <div style="padding: 10px; background: #111827; border-top: 1px solid var(--border-color); display: flex; gap: 10px;">
+                            <input type="text" id="admin-chat-input" placeholder="Napište zprávu jako administrátor..." style="flex: 1; margin-bottom: 0;" onkeydown="if(event.key==='Enter') odeslatAdminChatZpravu()">
+                            <button onclick="odeslatAdminChatZpravu()">Odeslat jako Admin</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="page-admin-nastaveni" class="page-panel hidden">
+                    <h2>Nastavení účtu</h2>
+                    <div style="background: #111827; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; max-width: 400px;">
+                        <h3>Změna hesla</h3>
+                        <input type="password" id="admin-new-password-input" placeholder="Nové heslo (min. 6 znaků)" style="width: 100%; margin-bottom: 10px;">
+                        <button onclick="zmenitHesloHrace('admin-new-password-input', 'admin-password-msg')" style="width: 100%;">Změnit heslo</button>
+                        <p id="admin-password-msg" style="margin-top: 10px; font-size: 0.9rem;"></p>
+                    </div>
+                </div>
+            `;
+
+            nactiAdminNastenkuData();
+            nactiAdminVsechnyRecepty();
+            nactiAdminHraceARecepty();
+        }
+
+        // --- DATOVÉ FUNKCE (RECEPTY, INVENTÁŘ, NÁSTĚNKA, CHAT) ---
+        async function nactiSeznamReceptu() {
+            const { data } = await window.dbClient.from('user_recipes').select('recipes(*)').eq('user_id', aktualniUzivatel.id);
+            const listEl = document.getElementById('recipe-list');
+            if (!listEl) return;
+            if (!data || data.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">Zatím nemáte žádné recepty.</p>';
+                return;
+            }
+            const recepty = data.map(item => item.recipes).filter(r => r);
+            listEl.innerHTML = recepty.map(r => `
+                <li onclick='zobrazDetailReceptu(${JSON.stringify(r)})' style="background: #111827; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; cursor: pointer;">
+                    📜 <strong>${escapeHtml(r.title)}</strong>
+                </li>
+            `).join('');
+        }
+
+        async function odemknoutRecept() {
+            const kod = document.getElementById('secret-code-input').value.trim();
+            const msgEl = document.getElementById('recipe-msg');
+            if (!kod) return;
+            const { data: recept } = await window.dbClient.from('recipes').select('*').eq('secret_code', kod).maybeSingle();
+            if (!recept) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Neplatný kód receptu.';
+                return;
+            }
+            const { error } = await window.dbClient.from('user_recipes').insert([{ user_id: aktualniUzivatel.id, recipe_id: recept.id }]);
+            if (error) {
+                msgEl.style.color = 'var(--recipe-gold)';
+                msgEl.textContent = 'Tento recept už máte odemčený!';
+            } else {
+                msgEl.style.color = 'var(--success)';
+                msgEl.textContent = `Úspěšně odemčeno: ${recept.title}!`;
+                document.getElementById('secret-code-input').value = '';
+                nactiSeznamReceptu();
+            }
+        }
+
+        function zobrazDetailReceptu(r) {
+            document.getElementById('recipe-detail-container').innerHTML = `<img src="${escapeHtml(r.image_url)}" alt="${escapeHtml(r.title)}" style="width: 100%; height: auto; border-radius: 6px;">`;
+        }
+
+        async function nactiInventar() {
+            const { data } = await window.dbClient.from('user_inventory').select('*').eq('user_id', aktualniUzivatel.id).order('created_at', { ascending: false });
+            const listEl = document.getElementById('inventory-list');
+            if (!listEl) return;
+            if (!data || data.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">Váš inventář je prázdný.</p>';
+                return;
+            }
+            listEl.innerHTML = data.map(item => {
+                let badge = item.status === 'approved' ? '<span style="color: var(--success); font-size: 0.75rem;">(Schváleno)</span>' : '<span style="color: var(--recipe-gold); font-size: 0.75rem;">(Čeká na ověření)</span>';
+                return `<li style="background: #111827; border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; display: flex; justify-content: space-between;">
+                    <span>${escapeHtml(item.item_name)} (${item.quantity}x)</span> ${badge}
+                </li>`;
+            }).join('');
+        }
+
+        async function pridatDoInventare() {
+            const nazev = document.getElementById('new-item-name').value.trim();
+            const mnostvi = parseInt(document.getElementById('new-item-qty').value) || 1;
+            const msgEl = document.getElementById('inventory-msg');
+            if (!nazev) return;
+            const { error } = await window.dbClient.from('user_inventory').insert([{ user_id: aktualniUzivatel.id, item_name: nazev, quantity: mnostvi, status: 'pending' }]);
+            if (!error) {
+                msgEl.style.color = 'var(--success)';
+                msgEl.textContent = 'Požadavek odeslán adminovi.';
+                document.getElementById('new-item-name').value = '';
+                nactiInventar();
+            }
+        }
+
+        async function nactiNastenkaHrace() {
+            const { data: quests } = await window.dbClient.from('quests').select('*').order('created_at', { ascending: false });
+            const { data: reads } = await window.dbClient.from('user_quest_reads').select('quest_id').eq('user_id', aktualniUzivatel.id);
+            const precteneIds = new Set(reads ? reads.map(r => r.quest_id) : []);
+
+            const listEl = document.getElementById('quests-list');
+            if (!listEl) return;
+            if (!quests || quests.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">Žádné aktivní úkoly na nástěnce.</p>';
+                return;
+            }
+
+            listEl.innerHTML = quests.map(q => {
+                const jePrecteno = precteneIds.has(q.id);
+                const vykricnikHtml = !jePrecteno ? `<span style="background: var(--danger); color: white; border-radius: 50%; padding: 2px 6px; font-size: 0.7rem; margin-left: 8px;">!</span>` : '';
+                const akceHtml = !jePrecteno 
+                    ? `<button onclick="oznacitUkolPrecteny('${q.id}', this)" style="margin-top: 10px; background: var(--success); padding: 5px 10px; font-size: 0.8rem;">Označit jako přečtené</button>` 
+                    : `<span style="display: block; margin-top: 10px; color: var(--success); font-size: 0.8rem;">✔ Přečteno</span>`;
+
+                return `
+                    <div style="background: #0f172a; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px;">
+                        <h3 style="margin-top: 0; margin-bottom: 8px; font-size: 1rem; color: #fbbf24;">📜 ${escapeHtml(q.title)} ${vykricnikHtml}</h3>
+                        <p style="margin: 0 0 10px 0; font-size: 0.9rem; color: var(--text-main);">${escapeHtml(q.description)}</p>
+                        <div style="font-size: 0.8rem; color: var(--recipe-gold);">Odměna: ${escapeHtml(q.reward || 'Neznámá')}</div>
+                        ${akceHtml}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function oznacitUkolPrecteny(questId, tlacitko) {
+            const { data: { user }, error: userError } = await window.dbClient.auth.getUser();
+            
+            if (userError || !user) {
+                console.error("Uživatel není přihlášen:", userError);
+                return;
+            }
+
+            const userId = user.id;
+
+            const { error } = await window.dbClient
+                .from('user_quest_reads')
+                .upsert(
+                    { user_id: userId, quest_id: questId },
+                    { onConflict: 'user_id, quest_id' }
+                );
+
+            if (error) {
+                if (error.code !== '23505' && error.status !== 409) {
+                    console.error("Chyba při ukládání úkolu:", error);
+                    return;
+                }
+            }
+            
+            if (tlacitko) {
+                tlacitko.outerHTML = `<span style="color: green; font-weight: bold;">✓ Přečteno</span>`;
+            }
+        }
+
+        async function adminPridatUdalost() {
+            const title = document.getElementById('admin-quest-title').value.trim();
+            const description = document.getElementById('admin-quest-desc').value.trim();
+            const reward = document.getElementById('admin-quest-reward').value.trim();
+            const msgEl = document.getElementById('admin-quest-msg');
+
+            if (!title || !description) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Vyplňte název a popis události.';
+                return;
+            }
+
+            const { error } = await window.dbClient.from('quests').insert([{ title, description, reward }]);
+            if (error) {
+                msgEl.style.color = 'var(--danger)';
+                msgEl.textContent = 'Chyba při ukládání: ' + error.message;
+            } else {
+                msgEl.style.color = 'var(--success)';
+                msgEl.textContent = 'Událost byla úspěšně přidána na nástěnku!';
+                document.getElementById('admin-quest-title').value = '';
+                document.getElementById('admin-quest-desc').value = '';
+                document.getElementById('admin-quest-reward').value = '';
+                nactiAdminNastenkuData();
+            }
+        }
+
+        async function nactiAdminNastenkuData() {
+            const { data } = await window.dbClient.from('quests').select('*').order('created_at', { ascending: false });
+            const listEl = document.getElementById('admin-quests-list');
+            if (!listEl) return;
+
+            if (!data || data.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem;">Žádné aktivní události.</p>';
+                return;
+            }
+
+            listEl.innerHTML = data.map(q => `
+                <div style="background: #111827; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>${escapeHtml(q.title)}</strong><br><span style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(q.description)}</span>
+                    </div>
+                    <button onclick="smazatUdalost('${q.id}')" style="background: var(--danger); padding: 5px 10px; font-size: 0.8rem;">Smazat</button>
+                </div>
+            `).join('');
+        }
+
+        async function smazatUdalost(id) {
+            await window.dbClient.from('quests').delete().eq('id', id);
+            nactiAdminNastenkuData();
+        }
+
+        async function nactiAdminVsechnyRecepty() {
+            const { data } = await window.dbClient.from('recipes').select('*').order('title', { ascending: true });
+            const listEl = document.getElementById('admin-all-recipes-list');
+            if (!listEl) return;
+            if (!data || data.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem;">V databázi nejsou žádné recepty.</p>';
+                return;
+            }
+            listEl.innerHTML = data.map(r => `
+                <div style="background: #111827; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+                    <strong>📜 ${escapeHtml(r.title)}</strong> <span style="font-size: 0.8rem; color: var(--recipe-gold);">(Kód: ${escapeHtml(r.secret_code)})</span>
+                    <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: var(--text-muted);">${escapeHtml(r.description || 'Bez popisu')}</p>
+                </div>
+            `).join('');
+        }
+
+        async function nactiAdminHraceARecepty() {
+            const { data: profiles } = await window.dbClient.from('profiles').select('id, username').order('username');
+            const { data: userRecipes } = await window.dbClient.from('user_recipes').select('user_id, recipe_id');
+            const { data: allRecipes } = await window.dbClient.from('recipes').select('id, title');
+
+            const listEl = document.getElementById('admin-players-recipes-list');
+            if (!listEl) return;
+
+            if (!profiles || profiles.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem;">Žádní hráči v databázi.</p>';
+                return;
+            }
+
+            const recipeMap = {};
+            if (allRecipes) {
+                allRecipes.forEach(r => { recipeMap[String(r.id)] = r.title; });
+            }
+
+            listEl.innerHTML = profiles.map(player => {
+                const playerRecipeIds = userRecipes 
+                    ? userRecipes.filter(ur => String(ur.user_id) === String(player.id)).map(ur => String(ur.recipe_id))
+                    : [];
+
+                const ziskaneRecepty = playerRecipeIds.map(id => recipeMap[id]).filter(title => title);
+                let receptyHtml = ziskaneRecepty.length > 0 
+                    ? ziskaneRecepty.map(t => `<span style="background: #1e293b; padding: 3px 8px; border-radius: 4px; font-size: 0.8rem; border: 1px solid var(--border-color);">${escapeHtml(t)}</span>`).join(' ')
+                    : '<span style="color: var(--text-muted); font-size: 0.8rem;">Zatím žádné recepty</span>';
+
+                return `
+                    <div style="background: #111827; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 8px;">
+                        <strong style="color: #fbbf24; font-size: 1rem;">👤 ${escapeHtml(player.username)}</strong>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
+                            ${receptyHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // --- CHAT FUNKCE PRO HRÁČE ---
+        async function nactiChatZpravy() {
+            const { data: messages } = await window.dbClient
+                .from('chat_messages')
+                .select('id, user_id, message, created_at, profiles(username)')
+                .order('created_at', { ascending: true })
+                .limit(50);
+
+            const listEl = document.getElementById('chat-messages-list');
+            if (!listEl) return;
+
+            if (!messages || messages.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center;">Zatím žádné zprávy v chatu.</p>';
+                return;
+            }
+
+            listEl.innerHTML = messages.map(m => {
+                const prof = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+                const username = prof?.username || 'Neznámý hráč';
+                const cas = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const jeToMoje = aktualniUzivatel && m.user_id === aktualniUzivatel.id;
+                const align = jeToMoje ? 'align-self: flex-end; background: #1e293b;' : 'align-self: flex-start; background: #111827;';
+
+                return `
+                    <div style="${align} border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; max-width: 80%;">
+                        <div style="font-size: 0.75rem; color: #fbbf24; margin-bottom: 2px; display: flex; justify-content: space-between; gap: 15px;">
+                            <span>${escapeHtml(username)}</span>
+                            <span style="color: var(--text-muted);">${cas}</span>
+                        </div>
+                        <div style="font-size: 0.9rem; color: var(--text-main); word-break: break-word;">${escapeHtml(m.message)}</div>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.scrollTop = listEl.scrollHeight;
+        }
+
+        async function odeslatChatZpravu() {
+            const inputEl = document.getElementById('chat-input');
+            const text = inputEl.value.trim();
+            if (!text || !aktualniUzivatel) return;
+
+            const { error } = await window.dbClient.from('chat_messages').insert([
+                { user_id: aktualniUzivatel.id, message: text }
+            ]);
+
+            if (!error) {
+                inputEl.value = '';
+                nactiChatZpravy();
+            }
+        }
+
+        // --- CHAT FUNKCE PRO ADMINA ---
+        async function nactiAdminChatZpravy() {
+            const { data: messages } = await window.dbClient
+                .from('chat_messages')
+                .select('id, user_id, message, created_at, profiles(username)')
+                .order('created_at', { ascending: true })
+                .limit(50);
+
+            const listEl = document.getElementById('admin-chat-messages-list');
+            if (!listEl) return;
+
+            if (!messages || messages.length === 0) {
+                listEl.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center;">Žádné zprávy v chatu.</p>';
+                return;
+            }
+
+            listEl.innerHTML = messages.map(m => {
+                const prof = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+                const username = prof?.username || 'Neznámý hráč';
+                const cas = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                return `
+                    <div style="background: #111827; border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                        <div>
+                            <div style="font-size: 0.75rem; color: #fbbf24; margin-bottom: 2px;">
+                                <strong>${escapeHtml(username)}</strong> <span style="color: var(--text-muted); margin-left: 8px;">${cas}</span>
+                            </div>
+                            <div style="font-size: 0.9rem; color: var(--text-main); word-break: break-word;">${escapeHtml(m.message)}</div>
+                        </div>
+                        <button onclick="smazatChatZpravu('${m.id}')" style="background: var(--danger); color: white; padding: 2px 6px; font-size: 0.75rem; border-radius: 4px; white-space: nowrap;">Smazat</button>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.scrollTop = listEl.scrollHeight;
+        }
+
+        async function odeslatAdminChatZpravu() {
+            const inputEl = document.getElementById('admin-chat-input');
+            const text = inputEl.value.trim();
+            if (!text || !aktualniUzivatel) return;
+
+            const { error } = await window.dbClient.from('chat_messages').insert([
+                { user_id: aktualniUzivatel.id, message: `[Admin] ${text}` }
+            ]);
+
+            if (!error) {
+                inputEl.value = '';
+                nactiAdminChatZpravy();
+            }
+        }
+
+        async function smazatChatZpravu(messageId) {
+            if (!confirm("Opravdu chcete tuto zprávu smazat?")) return;
+
+            const { error } = await window.dbClient
+                .from('chat_messages')
+                .delete()
+                .eq('id', messageId);
+
+            if (error) {
+                alert("Chyba při mazání: " + error.message);
+            } else {
+                nactiAdminChatZpravy();
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // --- ADMIN MATICOVÝ PŘEHLED (ČISTÁ JEDINÁ VERZE) ---
+        window.toggleAdminPrehledPrecteni = function() {
+            const wrapper = document.getElementById('admin-prehled-tabulka-wrapper');
+            if (!wrapper) return;
+
+            if (wrapper.style.display === 'none' || wrapper.style.display === '') {
+                wrapper.style.display = 'block';
+                nactiMaticovyPrehled();
+            } else {
+                wrapper.style.display = 'none';
+            }
+        };
+
+        async function nactiMaticovyPrehled() {
+            const obsahDiv = document.getElementById('admin-prehled-obsah');
+            if (!obsahDiv) return;
+
+            obsahDiv.innerHTML = '<span style="color: white;">Načítám kompletní přehled...</span>';
+
+            const { data: quests, error: questsError } = await window.dbClient.from('quests').select('id, title');
+            const { data: profiles, error: profilesError } = await window.dbClient.from('profiles').select('id, username, is_admin');
+            const { data: reads, error: readsError } = await window.dbClient.from('user_quest_reads').select('user_id, quest_id');
+
+            if (questsError || profilesError || readsError) {
+                obsahDiv.innerHTML = '<span style="color: #ef4444;">Chyba při načítání dat z databáze. Zkontroluj konzoli.</span>';
+                console.error({ questsError, profilesError, readsError });
+                return;
+            }
+
+            if (!quests || quests.length === 0) {
+                obsahDiv.innerHTML = '<em style="color: white;">V databázi nejsou žádné úkoly.</em>';
+                return;
+            }
+
+            if (!profiles || profiles.length === 0) {
+                obsahDiv.innerHTML = '<em style="color: white;">V databázi nejsou žádní uživatelé/profily.</em>';
+                return;
+            }
+
+            const regularProfiles = profiles.filter(prof => !prof.is_admin);
+
+            if (regularProfiles.length === 0) {
+                obsahDiv.innerHTML = '<em style="color: white;">V databázi nejsou žádní běžní hráči (pouze administrátoři).</em>';
+                return;
+            }
+
+            const readsSet = new Set();
+            if (reads) {
+                reads.forEach(r => {
+                    readsSet.add(`${r.user_id}_${r.quest_id}`);
+                });
+            }
+
+            let html = `
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px; background: #111827; color: white;">
+                        <thead>
+                            <tr style="background: #1f2937;">
+                                <th style="padding: 10px; border: 1px solid #374151; text-align: left; position: sticky; left: 0; background: #1f2937; color: white; z-index: 1;">Hráč</th>
+            `;
+
+            quests.forEach(quest => {
+                const nazevUkolu = quest.title || 'Bez názvu';
+                html += `<th style="padding: 10px; border: 1px solid #374151; text-align: center; min-width: 100px; color: white;" title="${escapeHtml(nazevUkolu)}">${escapeHtml(nazevUkolu)}</th>`;
+            });
+
+            html += `</tr></thead><tbody>`;
+
+            regularProfiles.forEach(prof => {
+                const jmenoHrace = prof.username || `Uživatel (${prof.id.substring(0, 6)}...)`;
+                
+                html += `
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #374151; font-weight: bold; background: #1f2937; color: white; position: sticky; left: 0;">${escapeHtml(jmenoHrace)}</td>
+                `;
+
+                quests.forEach(quest => {
+                    const klic = `${prof.id}_${quest.id}`;
+                    const jePrecteno = readsSet.has(klic);
+
+                    if (jePrecteno) {
+                        html += `<td style="padding: 8px; border: 1px solid #374151; text-align: center; background: #064e3b; color: #a7f3d0; font-weight: bold;">✓ Přečteno</td>`;
+                    } else {
+                        html += `<td style="padding: 8px; border: 1px solid #374151; text-align: center; background: #7f1d1d; color: #fecaca;">✗ Nečteno</td>`;
+                    }
+                });
+
+                html += `</tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            obsahDiv.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
