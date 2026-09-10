@@ -112,7 +112,7 @@ export default function Auth({ onLoginSuccess }) {
 
       <div 
         className="relative w-full max-w-md h-[460px] sm:h-[500px] bg-no-repeat bg-[length:100%_100%] flex flex-col justify-between px-16 sm:px-20 py-8 sm:py-10 text-amber-950 shadow-2xl font-scroll"
-        style={{ backgroundImage: `url('/svitek-pozadi.png')` }}
+        style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
       >
         <div className="text-center mt-6">
           <h2 className="text-base sm:text-lg font-bold font-title tracking-wider text-amber-900 underline decoration-amber-800/50 underline-offset-4">
