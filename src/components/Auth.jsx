@@ -114,8 +114,8 @@ export default function Auth({ onLoginSuccess }) {
         className="relative w-full max-w-md h-[460px] sm:h-[500px] bg-no-repeat bg-[length:100%_100%] flex flex-col justify-between px-16 sm:px-20 py-8 sm:py-10 text-amber-950 shadow-2xl font-scroll"
         style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
       >
-        <div className="text-center mt-6">
-          <h2 className="text-base sm:text-lg font-bold font-title tracking-wider text-amber-900 underline decoration-amber-800/50 underline-offset-4">
+        <div className="text-center mt-16">
+          <h2 className="text-base sm:text-xl font-bold font-title tracking-wider text-amber-900 underline decoration-amber-800/50 underline-offset-4">
             {isNewPassword ? 'Nové heslo' : isReset ? 'Obnova hesla' : isLogin ? 'Vstup do hry' : 'Nová postava'}
           </h2>
         </div>
@@ -212,13 +212,13 @@ export default function Auth({ onLoginSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 py-1.5 bg-[#8b5a2b] hover:bg-[#704822] text-amber-100 font-bold rounded shadow-md transition-colors uppercase tracking-wider text-xs border border-amber-950/40 font-title"
+            className="w-full mt-2 py-1 bg-[#8b5a2b] hover:bg-[#704822] text-amber-100 font-bold rounded shadow-md transition-colors uppercase tracking-wider text-xs border border-amber-950/40 font-title"
           >
             {loading ? 'Pracuji...' : isNewPassword ? 'Uložit nové heslo' : isReset ? 'Odeslat odkaz' : isLogin ? 'Vstoupit do hry' : 'Zaregistrovat postavu'}
           </button>
         </form>
 
-        <div className="flex justify-between items-center text-[11px] sm:text-xs font-bold pt-2 pb-6 border-t border-amber-900/20">
+        <div className="flex justify-between items-center text-[11px] sm:text-xs font-bold pt-2 pb-16 border-t border-amber-900/20">
           {isReset || isNewPassword ? (
             <button 
               type="button"
