@@ -1,73 +1,79 @@
 import React from 'react';
 
 export default function Character({ profileData }) {
-  const currentXp = 50;
-  const maxXp = 250;
-  const xpPercentage = (currentXp / maxXp) * 100;
+  // Jméno hráče uložené v Supabase pod sloupcem character_name
+  const playerName = profileData?.character_name || 'Hrdina';
 
   return (
-    <div className="bg-amber-100/95 p-6 rounded-lg shadow-2xl max-w-2xl w-full border-2 border-amber-900 flex flex-col items-center relative font-scroll">
-      <h1 className="text-2xl font-bold font-title text-amber-900 mb-1">Síň hrdinů</h1>
-      <p className="text-xs uppercase tracking-widest text-amber-800 mb-4 font-title">Fáze I: Cesta hrdiny</p>
+    <div 
+      style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
+      className="relative w-full max-w-2xl bg-[length:100%_100%] bg-center py-20 px-12 text-amber-950 font-scroll shadow-2xl flex flex-col items-center"
+    >
+      {/* 📜 HLAVIČKA: Jméno postavy z tabulky profilů a posuvník zkušeností nahoře */}
+      <div className="flex flex-col items-center w-full max-w-md mb-8">
+        <h2 className="text-3xl font-bold font-title text-amber-950 tracking-wider mb-2 drop-shadow-sm text-center">
+          {playerName}
+        </h2>
+        <div className="text-xs font-title text-amber-800/90 uppercase tracking-widest mb-4">
+          {profileData?.class || 'Bojovník • Nováček'}
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full items-center my-2">
+        {/* Posuvník zkušeností v krvavém odstínu bez pozadí */}
+        <div className="w-full flex flex-col gap-1.5">
+          <div className="flex justify-between text-[11px] font-title font-bold text-amber-950">
+            <span>Zkušenosti ( 50% )</span>
+            <span>99 / 200 XP</span>
+          </div>
+          <div className="w-full bg-red-950/20 h-3 rounded-full overflow-hidden border border-red-950/40 shadow-inner">
+            <div className="bg-gradient-to-r from-red-800 to-red-600 h-full rounded-full w-1/2 shadow-sm"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Hlavní mřížka výbavy a avataru uprostřed */}
+      <div className="grid grid-cols-3 gap-6 items-center w-full my-2">
         
-        {/* Levý sloupec: Výbava */}
-        <div className="flex flex-col gap-3 items-center md:items-end">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-amber-900">Helma</span>
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">🛡️</div>
+        {/* Levý sloupec (Výbava) */}
+        <div className="flex flex-col gap-5 items-end">
+          <div className="flex items-center gap-3">
+            <span className="font-title font-bold text-sm drop-shadow-sm">Hlava</span>
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">🛡️</div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-amber-900">Brnění</span>
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">🧥</div>
+          <div className="flex items-center gap-3">
+            <span className="font-title font-bold text-sm drop-shadow-sm">Zbraň</span>
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">🗡️</div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-amber-900">Rukavice</span>
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">🧤</div>
+          <div className="flex items-center gap-3">
+            <span className="font-title font-bold text-sm drop-shadow-sm">Rukavice</span>
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">🧤</div>
           </div>
         </div>
 
-        {/* Střed: Postava */}
+        {/* Střední sloupec (Avatar) */}
         <div className="flex flex-col items-center justify-center">
-          <div className="w-24 h-32 bg-amber-200/50 border-2 border-amber-900 rounded-lg flex items-center justify-center text-4xl shadow-md mb-3">
-            {profileData?.gender === 'zena' ? '🧝‍♀️' : '🧝‍♂️'}
+          <div className="w-28 h-28 bg-amber-200/60 border-2 border-amber-900/60 rounded-xl shadow-md flex items-center justify-center">
+            <span className="text-5xl">🧑‍🦲</span>
           </div>
-          <h2 className="text-lg font-bold font-title text-amber-950">{profileData?.character_name}</h2>
-          <p className="text-xs text-amber-900/80">Úroveň 1 ({profileData?.gender === 'zena' ? 'Bojovnice' : 'Bojovník'})</p>
         </div>
 
-        {/* Pravý sloupec: Výbava */}
-        <div className="flex flex-col gap-3 items-center md:items-start">
-          <div className="flex items-center gap-2">
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">👢</div>
-            <span className="text-xs font-bold text-amber-900">Boty</span>
+        {/* Pravý sloupec (Výbava) */}
+        <div className="flex flex-col gap-5 items-start">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">👢</div>
+            <span className="font-title font-bold text-sm drop-shadow-sm">Boty</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">💍</div>
-            <span className="text-xs font-bold text-amber-900">Doplňky</span>
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">💍</div>
+            <span className="font-title font-bold text-sm">Doplněk</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-12 h-12 bg-amber-200/80 border-2 border-amber-900/60 rounded flex items-center justify-center text-xs shadow-inner cursor-pointer hover:bg-amber-300">🎒</div>
-            <span className="text-xs font-bold text-amber-900">Batoh</span>
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-amber-200/50 border border-amber-900/40 rounded flex items-center justify-center shadow-inner">🍎</div>
+            <span className="font-title font-bold text-sm">Bariera</span>
           </div>
         </div>
 
       </div>
 
-      {/* Posuvník zkušeností */}
-      <div className="w-full max-w-md mt-4 bg-amber-950/10 p-3 rounded border border-amber-900/30">
-        <div className="flex justify-between text-xs font-bold mb-1 text-amber-900">
-          <span>Zkušenosti (XP)</span>
-          <span>{currentXp} / {maxXp} XP</span>
-        </div>
-        <div className="w-full bg-amber-950/20 h-3 rounded-full overflow-hidden border border-amber-900/40">
-          <div 
-            className="bg-amber-700 h-full transition-all duration-500 rounded-full" 
-            style={{ width: `${xpPercentage}%` }}
-          ></div>
-        </div>
-      </div>
     </div>
   );
 }
