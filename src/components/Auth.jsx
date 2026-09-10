@@ -67,29 +67,18 @@ export default function Auth({ onLoginSuccess }) {
 
         onLoginSuccess(prof);
       } else {
+        // Registrace - postará se o ni Supabase Auth a databázový trigger vytvoří profil automaticky
         const { error: authError } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            data: { character_name: nickname }
+            data: { 
+              character_name: nickname.trim(),
+              gender: gender 
+            }
           }
         });
         if (authError) throw authError;
-
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert([
-            { 
-              character_name: nickname.trim(), 
-              email: email.trim(), 
-              gender: gender,
-              role: 'player' 
-            }
-          ]);
-
-        if (profileError) {
-          console.error('Chyba při zakládání profilu:', profileError.message);
-        }
 
         setMessage('Registrace proběhla úspěšně! Nyní se můžete přihlásit.');
         setIsLogin(true);
