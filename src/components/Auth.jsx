@@ -49,14 +49,25 @@ export default function Auth({ onLoginSuccess }) {
         if (error) throw error;
         setMessage('Odkaz pro obnovení hesla byl odeslán na váš e-mail.');
       } else if (isLogin) {
-        const { data: prof, error: profileError } = await supabase
-          .from('profiles')
+        // Použijeme .ilike místo .eq(), aby nezáleželo na velkých/malých písmenech (např. jozin vs Jozin)
+        const { data: results, error: profileError } = await supabase
+          .schema('public') 
+          .from('player_logins')
           .select('*')
-          .eq('character_name', nickname.trim())
-          .single();
+          .ilike('character_name', nickname.trim());
 
-        if (profileError || !prof) {
-          throw new Error('Hrdina s touto přezdívkou nebyl nalezen.');
+        if (profileError) {
+          throw new Error('Chyba databáze: ' + profileError.message);
+        }
+
+        if (!results || results.length === 0) {
+          throw new Error(`Hrdina "${nickname.trim()}" nebyl v databázi nalezen.`);
+        }
+
+        const prof = results[0];
+
+        if (!prof.email) {
+          throw new Error('Tento profil nemá v databázi přiřazený e-mail.');
         }
 
         const { error: authError } = await supabase.auth.signInWithPassword({

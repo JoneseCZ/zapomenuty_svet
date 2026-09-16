@@ -18,10 +18,19 @@ export default function PlayerDashboard({ profileData, onLogout }) {
   const [unlockedRecipes, setUnlockedRecipes] = useState([]);
   const [selectedRecipe, setSelectedRecipe] = useState(null);
 
+  // Stavy pro inventář, čekací listinu a historii
+  const [inventorySlots, setInventorySlots] = useState([]);
+  const [pendingItems, setPendingItems] = useState([]);
+  const [itemHistory, setItemHistory] = useState([]);
+  const [foundInput, setFoundInput] = useState('');
+  const [foundLoading, setFoundLoading] = useState(false);
+  const [foundMessage, setFoundMessage] = useState(null);
+
   useEffect(() => {
     if (profileData?.id) {
       checkUnreadLegendOnLogin();
       fetchUnlockedRecipes();
+      fetchInventoryData();
     }
   }, [profileData]);
 
@@ -35,9 +44,9 @@ export default function PlayerDashboard({ profileData, onLogout }) {
       if (legError) throw legError;
 
       const { data: readsData, error: readError } = await supabase
-        .from('legend_reads')
+        .from('legends_reads')
         .select('legend_id')
-        .eq('user_id', profileData.id);
+        .eq('player_id', profileData.id);
 
       if (readError) throw readError;
 
@@ -56,8 +65,8 @@ export default function PlayerDashboard({ profileData, onLogout }) {
   const handleMarkAsRead = async (legendId) => {
     try {
       const { error } = await supabase
-        .from('legend_reads')
-        .insert([{ user_id: profileData.id, legend_id: legendId }]);
+        .from('legends_reads')
+        .insert([{ player_id: profileData.id, legend_id: legendId }]);
 
       if (error && error.code !== '23505') throw error;
 
@@ -68,7 +77,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
     }
   };
 
-  // Načtení odemčených receptů pro daného hráče (včetně image_url)
   const fetchUnlockedRecipes = async () => {
     try {
       const { data, error } = await supabase
@@ -95,18 +103,94 @@ export default function PlayerDashboard({ profileData, onLogout }) {
     }
   };
 
-  // Funkce pro generování náhodného kódu
+  // Načtení dat inventáře, čekací listiny a historie
+  const fetchInventoryData = async () => {
+    try {
+      // 1. Inventář
+      const { data: invData, error: invError } = await supabase
+        .from('player_inventory')
+        .select('*')
+        .eq('player_id', profileData.id);
+
+      if (invError) throw invError;
+      setInventorySlots(invData || []);
+
+      // 2. Čekací listina
+      const { data: pendData, error: pendError } = await supabase
+        .from('pending_items')
+        .select('*')
+        .eq('player_id', profileData.id)
+        .order('created_at', { ascending: false });
+
+      if (pendError) throw pendError;
+      setPendingItems(pendData || []);
+
+      // 3. Historie
+      const { data: histData, error: histError } = await supabase
+        .from('item_history')
+        .select('*')
+        .eq('player_id', profileData.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (histError) throw histError;
+      setItemHistory(histData || []);
+
+    } catch (err) {
+      console.error('Chyba při načítání inventáře:', err.message);
+    }
+  };
+
+  // Odeslání fyzicky nalezených surovin
+  const handleFoundSubmit = async (e) => {
+    e.preventDefault();
+    if (!foundInput.trim()) return;
+
+    setFoundLoading(true);
+    setFoundMessage(null);
+
+    const input = foundInput.trim();
+    const match = input.match(/^(\d+)\s*(?:x\s*)?(.+)$/i);
+    let quantity = 1;
+    let itemId = input.toLowerCase();
+
+    if (match) {
+      quantity = parseInt(match[1], 10);
+      itemId = match[2].trim().toLowerCase().replace(/\s+/g, '_');
+    }
+
+    try {
+      const { error } = await supabase
+        .from('pending_items')
+        .insert([{
+          player_id: profileData.id,
+          item_id: itemId,
+          quantity: quantity,
+          status: 'pending'
+        }]);
+
+      if (error) throw error;
+
+      setFoundInput('');
+      setFoundMessage('Úspěšně odesláno ke schválení adminovi.');
+      fetchInventoryData();
+    } catch (err) {
+      console.error('Chyba při odesílání nálezu:', err.message);
+      setFoundMessage('Chyba při odesílání.');
+    } finally {
+      setFoundLoading(false);
+    }
+  };
+
   const generateSecretCode = () => {
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 7; i++) {
-      const randomIndex = Math.floor(Math.random() * chars.length);
-      code += chars[randomIndex];
+      code += chars[Math.floor(Math.random() * chars.length)];
     }
     return code;
   };
 
-  // Hlavní logika pro odemknutí kódu
   const handleUnlockSubmit = async (e) => {
     e.preventDefault();
     if (!inputCode.trim()) return;
@@ -157,12 +241,10 @@ export default function PlayerDashboard({ profileData, onLogout }) {
           if (!checkDup || checkDup.length === 0) codeExists = false;
         }
 
-        const { error: updateError } = await supabase
+        await supabase
           .from('recipes')
           .update({ secret_code: newCode })
           .eq('id', recipe.id);
-
-        if (updateError) throw updateError;
 
         await supabase
           .from('code_attempts_log')
@@ -176,7 +258,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
         setUnlockSuccess(true);
         setUnlockMessage(`Úspěch! Odemknut: ${recipe.name}`);
         setInputCode('');
-        
         await fetchUnlockedRecipes();
 
       } else {
@@ -213,7 +294,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
           setUnlockMessage('❌ Neplatný kód. Zkontroluj zápis.');
         }
       }
-
     } catch (err) {
       console.error('Chyba při ověřování kódu:', err.message);
       setUnlockMessage('Došlo k chybě při komunikaci se serverem.');
@@ -310,18 +390,14 @@ export default function PlayerDashboard({ profileData, onLogout }) {
         {activeTab === 'announcements' && <PlayerAnnouncements profileData={profileData} />}
         {activeTab === 'chat' && <Chat profileData={profileData} />}
         
-       {/* RECEPTY - LEVÝ SVITEK + PRAVÁ STRANA S OBRÁZKEM NEBO TEXTEM */}
+        {/* RECEPTY */}
         {activeTab === 'recipes' && (
           <div className="w-full max-w-7xl flex gap-8 items-start justify-center">
-            
-            {/* LEVÝ SVITEK (POUZE SEZNAM NÁZVŮ) */}
             <div 
               className="relative w-full max-w-md bg-[length:100%_100%] bg-no-repeat shadow-2xl px-12 py-30 text-amber-950 font-scroll flex flex-col min-h-[750px]"
               style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
             >
               <h2 className="text-3xl font-bold font-title text-amber-900 mb-6 text-center tracking-wide">Kniha receptů</h2>
-
-              {/* Formulář pro odemknutí kódu */}
               <div className="mb-6 px-2">
                 <form onSubmit={handleUnlockSubmit} className="flex gap-2">
                   <input
@@ -347,7 +423,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
                 )}
               </div>
 
-              {/* Seznam odemčených receptů (odsazený vlevo) */}
               <h3 className="text-lg font-bold font-title text-amber-900 mb-3 uppercase tracking-wide text-center">Odemčené recepty:</h3>
               <div className="flex-1 overflow-y-auto space-y-1 pr-1">
                 {unlockedRecipes.length === 0 ? (
@@ -373,11 +448,9 @@ export default function PlayerDashboard({ profileData, onLogout }) {
               </div>
             </div>
 
-            {/* PRAVÁ STRANA - OBRÁZEK NEBO SVITEK S TEXTEM */}
             <div className="flex-1 min-h-[750px] flex flex-col items-center justify-center">
               {selectedRecipe ? (
                 selectedRecipe.image_url ? (
-                  /* POKUD MÁ RECEPT OBRÁZEK: Zobrazí se čistě obrázek bez svitku */
                   <div className="flex flex-col items-center justify-center w-full h-full p-4">
                     <img 
                       src={selectedRecipe.image_url} 
@@ -386,7 +459,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
                     />
                   </div>
                 ) : (
-                  /* POKUD OBRÁZEK CHYBÍ: Zobrazí se klasický svitek s textem */
                   <div 
                     className="relative w-full h-full bg-[length:100%_100%] bg-no-repeat shadow-2xl p-16 text-amber-950 font-scroll flex flex-col overflow-y-auto min-h-[750px]"
                     style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
@@ -398,7 +470,6 @@ export default function PlayerDashboard({ profileData, onLogout }) {
                           Profese: <span className="font-bold">{selectedRecipe.job || 'Univerzální'}</span> &bull; Požadovaná úroveň: <span className="font-bold">{selectedRecipe.level || 1}</span>
                         </div>
                       </div>
-
                       <div className="p-6 text-amber-950 text-lg leading-relaxed whitespace-pre-wrap">
                         {selectedRecipe.data_json ? (
                           typeof selectedRecipe.data_json === 'string' 
@@ -412,19 +483,124 @@ export default function PlayerDashboard({ profileData, onLogout }) {
                   </div>
                 )
               ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  {/* Pravá strana je prázdná, dokud hráč na nějaký recept neklikne */}
-                </div>
+                <div className="w-full h-full flex items-center justify-center"></div>
               )}
             </div>
-
           </div>
         )}
 
+        {/* INVENTÁŘ */}
         {activeTab === 'inventory' && (
-          <div className="bg-[#e3cbb2] border-4 border-amber-900 p-10 rounded-2xl shadow-2xl max-w-3xl w-full text-center font-scroll text-amber-950">
-            <h2 className="text-2xl font-bold font-title text-amber-900 mb-4">Inventář</h2>
-            <p className="text-lg text-amber-900/80">Tato záložka na své naprogramování teprve čeká...</p>
+          <div 
+            className="relative w-full max-w-4xl bg-[length:100%_100%] bg-no-repeat shadow-2xl p-12 text-amber-950 font-scroll flex flex-col items-center min-h-[750px]"
+            style={{ backgroundImage: `url('/svitek-pozadi.jpg')` }}
+          >
+            <div className="w-full flex justify-between items-center mb-6 border-b-2 border-amber-900/30 pb-4">
+              {/* Vlevo nahoře: Peníze */}
+              <div className="text-xl font-bold font-title text-amber-900 flex items-center gap-2 bg-amber-900/10 px-4 py-2 rounded-lg border border-amber-900/30">
+                <span>💰 Peníze:</span>
+                <span>{profileData?.gold || profileData?.coins || 0}</span>
+              </div>
+
+              <h2 className="text-3xl font-bold font-title text-amber-900">Inventář postavy</h2>
+
+              {/* Vpravo nahoře: Zadání fyzicky nalezených surovin */}
+              <form onSubmit={handleFoundSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  value={foundInput}
+                  onChange={(e) => setFoundInput(e.target.value)}
+                  placeholder="Např. 3x peří"
+                  className="px-3 py-1.5 bg-white/70 border border-amber-900/40 rounded text-amber-950 text-sm focus:outline-none focus:border-amber-900 shadow-inner"
+                />
+                <button
+                  type="submit"
+                  disabled={foundLoading}
+                  className="px-4 py-1.5 bg-amber-900 hover:bg-amber-950 text-amber-100 rounded text-sm font-bold font-title shadow-md transition-all disabled:opacity-50"
+                >
+                  {foundLoading ? '...' : 'Nalezeno'}
+                </button>
+              </form>
+            </div>
+
+            {foundMessage && (
+              <div className="mb-4 text-xs font-bold text-amber-900 bg-amber-900/10 px-3 py-1 rounded border border-amber-900/20">
+                {foundMessage}
+              </div>
+            )}
+
+            {/* Grid slotů inventáře (Základ 10 pozic) */}
+            <div className="grid grid-cols-5 gap-4 my-6">
+              {Array.from({ length: 10 }).map((_, index) => {
+                const item = inventorySlots.find(s => s.slot_index === index);
+                return (
+                  <div 
+                    key={index} 
+                    className="w-24 h-24 bg-amber-950/10 border-2 border-amber-900/50 rounded-xl relative flex items-center justify-center shadow-inner"
+                  >
+                    {item ? (
+                      <>
+                        <img 
+                          src={`/images/items/${item.item_id}.png`} 
+                          alt={item.item_id} 
+                          className="w-14 h-14 object-contain drop-shadow"
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                        <span className="absolute bottom-1 left-1 bg-amber-950 text-amber-100 text-xs px-2 py-0.5 rounded font-bold">
+                          {item.quantity}/10
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-amber-900/30 text-sm font-bold">{index + 1}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Spodní část: Čekací listina a Historie */}
+            <div className="w-full grid grid-cols-2 gap-6 mt-6 border-t-2 border-amber-900/30 pt-6">
+              {/* Čekací listina */}
+              <div className="bg-amber-900/5 p-4 rounded-xl border border-amber-900/20 max-h-48 overflow-y-auto">
+                <h3 className="font-title font-bold text-amber-900 mb-2">⏳ Čekací listina (schvaluje admin)</h3>
+                {pendingItems.length === 0 ? (
+                  <p className="text-xs text-amber-900/70 italic">Žádné suroviny nečekají na schválení.</p>
+                ) : (
+                  <div className="space-y-1 text-xs">
+                    {pendingItems.map((p) => (
+                      <div key={p.id} className="flex justify-between items-center bg-white/50 px-2 py-1 rounded">
+                        <span>{p.quantity}x {p.item_id}</span>
+                        <span className="text-amber-800 font-bold">{p.status === 'pending' ? 'Čeká...' : p.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Historie surovin */}
+              <div className="bg-amber-900/5 p-4 rounded-xl border border-amber-900/20 max-h-48 overflow-y-auto">
+                <h3 className="font-title font-bold text-amber-900 mb-2">📜 Historie surovin</h3>
+                {itemHistory.length === 0 ? (
+                  <p className="text-xs text-amber-900/70 italic">Zatím žádná historie záznamů.</p>
+                ) : (
+                  <div className="space-y-1 text-xs">
+                    {itemHistory.map((h) => {
+                      const isGain = h.change_type === 'gain';
+                      return (
+                        <div key={h.id} className="flex justify-between items-center bg-white/50 px-2 py-1 rounded">
+                          <span className={isGain ? 'text-green-800 font-bold' : 'text-red-800 font-bold'}>
+                            {isGain ? `+${h.quantity}` : `-${h.quantity}`} {h.item_id} ({h.source})
+                          </span>
+                          <span className="text-[10px] text-amber-900/60">
+                            {new Date(h.created_at).toLocaleDateString('cs-CZ')}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
