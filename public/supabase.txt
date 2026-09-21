@@ -1,0 +1,3 @@
+const supabaseUrl = 'https://rbjsrdsbowvtaiddfrcj.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJianNyZHNib3d2dGFpZGRmcmNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2MTI3MDcsImV4cCI6MjEwNTE4ODcwN30.ubUTUclbXOX60nAhVyBAiVQPitmZK2vwdtDel8fKifQ';
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
