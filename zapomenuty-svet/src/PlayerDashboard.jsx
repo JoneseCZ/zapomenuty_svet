@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import PlayerDashboardMap from './PlayerDashboardMap';
 import UserHeader from './UserHeader';
-import { supabase } from './App'; // Import Supabase klienta
+import { supabase } from './App';
+import PlayerDashboardRecipes from './PlayerDashboardRecipes';
+import PlayerDashboardCrafting from './PlayerDashboardCrafting';
 
-// Pomocná funkce pro formát datum na dd-mm-rrrr hh:mm
 const formatDate = (dateObj = new Date()) => {
   try {
     const d = new Date(dateObj);
@@ -34,49 +35,88 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
   });
 
   const [gold, setGold] = useState(userProfile?.gold || 0);
+  
+  // Stavy pro inventář a přebytky (zápis pro Supabase a bezpečný fallback)
   const [inventory, setInventory] = useState(Array(20).fill(null));
+  const [overflowItems, setOverflowItems] = useState([]);
 
-  // Historie zlaťáků z databáze
+  // Funkce pro uložení inventáře a přebytků přímo do Supabase
+  const saveInventoryToSupabase = async (newInventory, newOverflow) => {
+    setInventory(newInventory);
+    setOverflowItems(newOverflow);
+
+    if (!userProfile?.id) return;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ 
+        inventory: newInventory,
+        overflow_items: newOverflow 
+      })
+      .eq('id', userProfile.id);
+
+    if (error) {
+      console.error('Chyba při ukládání inventáře do Supabase:', error.message);
+    }
+  };
+
+  // Načtení dat ze Supabase při startu
+  useEffect(() => {
+    if (!userProfile?.id) return;
+
+    const fetchPlayerData = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('inventory, equipment, gold, overflow_items')
+        .eq('id', userProfile.id)
+        .single();
+
+      if (error) {
+        console.error('Chyba při načítání dat ze Supabase:', error.message);
+        return;
+      }
+
+      if (data) {
+        if (data.gold !== undefined) setGold(data.gold);
+        if (data.equipment) setEquipment(data.equipment);
+        if (data.overflow_items) setOverflowItems(data.overflow_items);
+        if (data.inventory && Array.isArray(data.inventory)) {
+          setInventory(data.inventory);
+        }
+      }
+    };
+
+    fetchPlayerData();
+  }, [userProfile?.id]);
+
+  const [inventoryActionModal, setInventoryActionModal] = useState(null);
   const [goldHistory, setGoldHistory] = useState([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-
-  // Stav pro vyskakovací okno nové zprávy/odměny od admina
   const [activeNotification, setActiveNotification] = useState(null);
-
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('postava');
 
-  // Funkce pro bezpečné načtení historie a úklid
   const fetchAndCleanHistory = async () => {
     if (!userProfile?.id) return;
-
     try {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      // 1. Pokus o promazání starých záznamů (necháme běžet tiše, nesmí blokovat načtení)
       await supabase
         .from('gold_history')
         .delete()
         .eq('user_id', userProfile.id)
         .lt('created_at', thirtyDaysAgo.toISOString());
     } catch (cleanErr) {
-      console.warn("Automatické mazání staré historie selhalo (pokračujeme v načítání):", cleanErr);
+      console.warn("Mazání staré historie selhalo:", cleanErr);
     }
 
-    // 2. Načtení aktuální historie z databáze (hlavní operace)
     const { data, error } = await supabase
       .from('gold_history')
       .select('*')
       .eq('user_id', userProfile.id)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error("Chyba při načítání historie zlatáků:", error.message);
-      return;
-    }
-
-    if (data) {
+    if (!error && data) {
       setGoldHistory(data.map(item => ({
         date: formatDate(item.created_at),
         change: item.change > 0 ? `+${item.change}` : `${item.change}`,
@@ -85,7 +125,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     }
   };
 
-  // Načtení historie a vyčištění starých záznamů při startu / změně profilu
   useEffect(() => {
     if (userProfile?.id) {
       setGold(userProfile.gold || 0);
@@ -93,73 +132,50 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     }
   }, [userProfile?.id]);
 
-  // Realtime poslech tabulky 'notifications'
   useEffect(() => {
     if (!userProfile?.id) return;
-
     const channelName = `notifications_user_${userProfile.id}`;
     
     const notificationChannel = supabase
       .channel(channelName)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${userProfile.id}`,
-        },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userProfile.id}` },
         (payload) => {
-          console.log('Nová notifikace od admina:', payload.new);
           const newNotif = payload.new;
-          
           if (newNotif) {
             const rewardAmount = newNotif.amount || 0;
             const messageText = newNotif.message || 'Zpráva od admina';
-
-            setActiveNotification({
-              amount: rewardAmount,
-              message: messageText
-            });
-
-            if (rewardAmount !== 0) {
-              setGold(prev => prev + rewardAmount);
-            }
-
-            const changeStr = `${rewardAmount >= 0 ? '+' : ''}${rewardAmount}`;
+            setActiveNotification({ amount: rewardAmount, message: messageText });
+            if (rewardAmount !== 0) setGold(prev => prev + rewardAmount);
             setGoldHistory(prev => [{
               date: formatDate(newNotif.created_at || new Date()),
-              change: changeStr,
+              change: `${rewardAmount >= 0 ? '+' : ''}${rewardAmount}`,
               reason: messageText
             }, ...prev]);
           }
         }
       )
-      .subscribe((status) => {
-        console.log("Stav Supabase Realtime připojení:", status);
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(notificationChannel);
     };
   }, [userProfile?.id]);
 
-  const characterImage = userProfile?.gender === 'žena' 
-    ? '/postava_zena.png' 
-    : '/postava_muz.png';
-
+  const characterImage = userProfile?.gender === 'žena' ? '/postava_zena.png' : '/postava_muz.png';
   const baseSlots = 10;
   const extraSlotsFromBackpack = equipment.batoh ? (equipment.batoh.extraSlots || 10) : 0;
   const totalInventorySlots = baseSlots + extraSlotsFromBackpack;
+
+  // Dynamické nastavení pozadí podle aktivní záložky (správný název souboru z public složky)
+  const currentBackground = activeTab === 'dilna' ? 'url(/crafting_pozadi.png)' : 'url(/pozadi_mlha.jpg)';
 
   const renderNavButton = (tabName, label) => {
     const isActive = activeTab === tabName;
     return (
       <button 
-        style={{
-          ...styles.navButton,
-          ...(isActive ? styles.navButtonActive : {})
-        }}
+        style={{ ...styles.navButton, ...(isActive ? styles.navButtonActive : {}) }}
         onClick={() => { setActiveTab(tabName); setMobileMenuOpen(false); }}
       >
         {label}
@@ -168,8 +184,8 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
   };
 
   return (
-    <div style={styles.container}>
-      {/* --- HORNÍ LIŠTA --- */}
+    <div style={{ ...styles.container, backgroundImage: currentBackground }}>
+      {/* HORNÍ LIŠTA */}
       <div style={styles.topBar}>
         <div style={styles.goldContainer}>
           <span style={styles.goldText}>{gold}</span>
@@ -179,25 +195,14 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         <span className="player-name" style={styles.nameValueTop}>{userProfile?.nickname || 'Hrdina'}</span>
 
         <div style={styles.topLeftGroup}>
-          <button 
-            style={styles.historyIconButton} 
-            onClick={() => setIsHistoryModalOpen(true)}
-            title="Historie zlatáků"
-          >
-            📜
-          </button>
+          <button style={styles.historyIconButton} onClick={() => setIsHistoryModalOpen(true)} title="Historie zlatáků">📜</button>
           <button onClick={onLogout} className="logout-btn" style={styles.logoutButton}>Odhlásit se</button>
         </div>
       </div>
 
-      {/* Hlavní kontejner */}
       <div style={styles.mainContent}>
-        
         <div className="mobile-menu-toggle-container">
-          <button 
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)} 
-            style={styles.mobileMenuBtn}
-          >
+          <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={styles.mobileMenuBtn}>
             {mobileMenuOpen ? '▲ Zavřít menu' : '▼ Herní menu'}
           </button>
         </div>
@@ -206,12 +211,13 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           {renderNavButton('postava', 'Postava')}
           {renderNavButton('inventar', 'Inventář')}
           {renderNavButton('recepty', 'Recepty')}
+          {renderNavButton('dilna', 'Dílna')}
           {renderNavButton('oznamovatel', 'Oznámovatel')}
           {renderNavButton('ukoly', 'Úkoly')}
           {renderNavButton('mapa', 'Mapa')}
         </div>
 
-        {/* --- ZÁLOŽKA: POSTAVA --- */}
+        {/* POSTAVA */}
         {activeTab === 'postava' && (
           <div className="dashboard-grid" style={styles.dashboardGrid}>
             <div className="slot-column" style={styles.column}>
@@ -223,12 +229,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
             </div>
 
             <div style={styles.characterContainer}>
-              <img 
-                src={characterImage} 
-                alt="Postava hrdiny" 
-                className="character-img"
-                style={styles.characterImg} 
-              />
+              <img src={characterImage} alt="Postava hrdiny" className="character-img" style={styles.characterImg} />
             </div>
 
             <div className="slot-column" style={styles.column}>
@@ -241,18 +242,22 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           </div>
         )}
 
-        {/* --- ZÁLOŽKA: INVENTÁŘ --- */}
+        {/* INVENTÁŘ */}
         {activeTab === 'inventar' && (
           <div style={styles.inventoryContainer}>
             <div style={styles.inventoryHeader}>
-              <span style={styles.inventoryCapacity}>Kapacita: {totalInventorySlots} slotů</span>
+              <span style={styles.inventoryCapacity}>Kapacita: {totalInventorySlots} slotů (Základ 10 + Batoh {extraSlotsFromBackpack})</span>
             </div>
 
             <div style={styles.inventoryGrid}>
               {Array.from({ length: totalInventorySlots }).map((_, index) => {
                 const item = inventory[index];
                 return (
-                  <div key={index} style={styles.inventorySlot}>
+                  <div 
+                    key={index} 
+                    style={styles.inventorySlot}
+                    onClick={() => { if (item) setInventoryActionModal({ index, item }); }}
+                  >
                     {item ? (
                       <div style={styles.inventoryItemContent}>
                         <span style={styles.itemName}>{item.name}</span>
@@ -267,49 +272,81 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
             </div>
             
             <p style={styles.inventoryHint}>
-              Kapacita inventáře se zvyšuje dle batohu nebo jiného vybavení nasazeného na postavě a umí zvyšovat inventář.
+              Kliknutím na surovinu v inventáři ji můžete vyhodit nebo si ji ponechat na pozdější prodej.
             </p>
           </div>
         )}
 
-        {/* --- ZÁLOŽKA: MAPA --- */}
+        {/* DÍLNA A VÝROBA */}
+        {activeTab === 'dilna' && (
+          <PlayerDashboardCrafting 
+            inventory={inventory} 
+            setInventory={(newInv) => saveInventoryToSupabase(newInv, overflowItems)} 
+            totalInventorySlots={totalInventorySlots} 
+            userProfile={userProfile}
+          />
+        )}
+
+        {/* MAPA */}
         {activeTab === 'mapa' && (
           <PlayerDashboardMap 
             gold={gold}
-            setGold={(updater) => {
-              setGold(prev => {
-                const nextGold = typeof updater === 'function' ? updater(prev) : updater;
-                return nextGold;
-              });
-            }}
+            setGold={setGold}
             inventory={inventory}
-            setInventory={setInventory}
-            equipment={equipment}
-            setEquipment={setEquipment}
+            setInventory={(newInv) => saveInventoryToSupabase(newInv, overflowItems)}
             totalInventorySlots={totalInventorySlots}
           />
         )}
 
-        {/* --- OSTATNÍ ZÁLOŽKY --- */}
-        {['recepty', 'oznamovatel', 'ukoly'].includes(activeTab) && (
+        {activeTab === 'recepty' && <PlayerDashboardRecipes userProfile={userProfile} />}
+
+        {['oznamovatel', 'ukoly'].includes(activeTab) && (
           <div style={styles.placeholderTabContent}>
-            <h2 style={{ fontFamily: 'Palatino Linotype', color: '#f3f4f6', textTransform: 'capitalize' }}>
-              Záložka: {activeTab}
-            </h2>
-            <p style={{ fontFamily: 'Palatino Linotype', color: '#9ca3af' }}>
-              Tento obsah se připravuje...
-            </p>
+            <h2 style={{ fontFamily: 'Palatino Linotype', color: '#f3f4f6', textTransform: 'capitalize' }}>Záložka: {activeTab}</h2>
+            <p style={{ fontFamily: 'Palatino Linotype', color: '#9ca3af' }}>Tento obsah se připravuje...</p>
           </div>
         )}
-
       </div>
 
-      {/* --- VYSKAKOVACÍ OKNO: PŘÍCHOZÍ ZPRÁVA OD ADMINA --- */}
+      {/* MODÁLNÍ OKNO PRO AKCE S PŘEDMĚTEM */}
+      {inventoryActionModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <button onClick={() => setInventoryActionModal(null)} style={styles.modalCloseX}>✕</button>
+            <h3 style={styles.modalTitle}>Správa suroviny: {inventoryActionModal.item.name}</h3>
+            <p style={styles.modalText}>
+              Množství v slotu: <b style={{color: '#fcd34d'}}>{inventoryActionModal.item.count}x</b><br/><br/>
+              ⚠️ Pozor: Vyhozením surovina nadobro zmizí!
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button 
+                style={{ ...styles.closeModalBtn, background: '#dc2626', borderColor: '#f87171' }} 
+                onClick={() => {
+                  const newInv = [...inventory];
+                  newInv[inventoryActionModal.index] = null;
+                  saveInventoryToSupabase(newInv, overflowItems);
+                  setInventoryActionModal(null);
+                }}
+              >
+                🗑️ Vyhodit (nadobro zmizí)
+              </button>
+              <button 
+                style={styles.closeModalBtn} 
+                onClick={() => setInventoryActionModal(null)}
+              >
+                Ponechat na pozdější prodej
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VYSKAKOVACÍ OKNO ADMIN ZPRÁVY */}
       {activeNotification && (
         <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalBox, borderColor: '#fbbf24', boxShadow: '0 0 20px rgba(251, 191, 36, 0.4)' }}>
-            <h3 style={{ ...styles.modalTitle, fontSize: '18px' }}>⚔️ Zpráva od správce</h3>
-            <div style={{ margin: '15px 0', fontFamily: 'Palatino Linotype', color: '#f3f4f6', fontSize: '14px', lineHeight: '1.5' }}>
+          <div style={{ ...styles.modalBox, borderColor: '#fbbf24' }}>
+            <h3 style={styles.modalTitle}>⚔️ Zpráva od správce</h3>
+            <div style={{ margin: '15px 0', fontFamily: 'Palatino Linotype', color: '#ffffff', fontSize: '14px', lineHeight: '1.5' }}>
               <p style={{ fontStyle: 'italic', marginBottom: '10px', color: '#fef08a' }}>„{activeNotification.message}“</p>
               {activeNotification.amount !== 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '16px', fontWeight: 'bold', color: '#4ade80', marginTop: '10px' }}>
@@ -318,30 +355,23 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
                 </div>
               )}
             </div>
-            <button 
-              style={styles.closeModalBtn} 
-              onClick={() => setActiveNotification(null)}
-            >
-              Převzít
-            </button>
+            <button style={styles.closeModalBtn} onClick={() => setActiveNotification(null)}>Převzít</button>
           </div>
         </div>
       )}
 
-      {/* --- MODÁLNÍ OKNO PRO HISTORII ZLATÁKŮ --- */}
+      {/* HISTORIE */}
       {isHistoryModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
-            <h3 style={styles.modalTitle}>Historie zlatáků (za posledních 30 dnů)</h3>
+            <h3 style={styles.modalTitle}>Historie zlatáků (za 30 dnů)</h3>
             <div style={styles.historyList}>
               {goldHistory.length === 0 ? (
                 <span style={{color: '#9ca3af', fontSize: '12px'}}>Zatím žádná historie</span>
               ) : (
                 goldHistory.map((item, idx) => (
                   <div key={idx} style={styles.historyItem}>
-                    <span style={{color: item.change.startsWith('+') ? '#4ade80' : '#f87171', fontWeight: 'bold'}}>
-                      {item.change} 🪙
-                    </span>
+                    <span style={{color: item.change.startsWith('+') ? '#4ade80' : '#f87171', fontWeight: 'bold'}}>{item.change} 🪙</span>
                     <span style={styles.historyReason}>{item.reason}</span>
                     <span style={styles.historyDate}>{item.date}</span>
                   </div>
@@ -358,7 +388,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         .slot-column { max-width: 95px !important; }
         .logout-btn { padding: 6px 14px !important; font-size: 12px !important; }
         .mobile-menu-toggle-container { display: none; }
-
         @media (max-width: 768px) {
           .dashboard-grid { gap: 10px !important; }
           .character-img { max-width: 130px !important; }
@@ -390,16 +419,16 @@ function Slot({ label, iconFile, item }) {
 }
 
 const styles = {
-  container: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center', minHeight: '100vh', backgroundImage: 'url(/pozadi_mlha.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', padding: '10px', boxSizing: 'border-box', overflowX: 'hidden', position: 'relative' },
+  container: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center', minHeight: '100vh', backgroundSize: 'cover', backgroundPosition: 'center', padding: '10px', boxSizing: 'border-box', overflowX: 'hidden', position: 'relative' },
   topBar: { position: 'relative', width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', zIndex: 10 },
   topLeftGroup: { display: 'flex', alignItems: 'center', gap: '10px' },
   historyIconButton: { background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#fff', border: '1px solid #fbbf24', borderRadius: '50%', width: '32px', height: '32px', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
-  logoutButton: { borderRadius: '20px', border: '1px solid #450a0a', background: 'linear-gradient(to bottom, #991b1b, #7f1d1d)', color: '#fee2e2', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', boxShadow: '0 4px 6px rgba(0,0,0,0.5)' },
-  nameValueTop: { fontFamily: 'Palatino Linotype', fontSize: '24px', color: '#f3f4f6', fontWeight: 'bold', textShadow: '0px 2px 6px rgba(0,0,0,0.9)', letterSpacing: '1px', textAlign: 'center' },
-  goldContainer: { display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(20, 10, 5, 0.85)', padding: '4px 10px', borderRadius: '12px', border: '1px solid #92400e', boxShadow: '0 2px 4px rgba(0,0,0,0.5)' },
-  goldText: { fontFamily: 'Palatino Linotype', fontSize: '14px', color: '#fcd34d', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.8)' },
+  logoutButton: { borderRadius: '20px', border: '1px solid #7f1d1d', background: 'linear-gradient(to bottom, #dc2626, #991b1b)', color: '#fee2e2', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', boxShadow: '0 4px 6px rgba(0,0,0,0.5)' },
+  nameValueTop: { fontFamily: 'Palatino Linotype', fontSize: '24px', color: '#ffffff', fontWeight: 'bold', textShadow: '0px 2px 6px rgba(0,0,0,0.9)', letterSpacing: '1px', textAlign: 'center' },
+  goldContainer: { display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(30, 15, 5, 0.95)', padding: '4px 10px', borderRadius: '12px', border: '1px solid #f59e0b', boxShadow: '0 2px 4px rgba(0,0,0,0.5)' },
+  goldText: { fontFamily: 'Palatino Linotype', fontSize: '14px', color: '#fcd34d', fontWeight: 'bold' },
   goldIcon: { width: '16px', height: '16px', objectFit: 'contain' },
-  mainContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '560px' },
+  mainContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '100%' },
   navigationContainer: { display: 'flex', gap: '8px', marginBottom: '15px', justifyContent: 'center', width: '100%', flexWrap: 'nowrap' },
   navButton: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '12px 18px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s' },
   navButtonActive: { filter: 'brightness(1.15) contrast(1.15) drop-shadow(0 0 8px rgba(245, 158, 11, 0.9))', transform: 'translateY(-3px)' },
@@ -408,28 +437,30 @@ const styles = {
   column: { display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 },
   characterContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1.5, background: 'transparent', border: 'none', boxShadow: 'none' },
   characterImg: { height: 'auto', background: 'transparent', filter: 'drop-shadow(0px 8px 16px rgba(0,0,0,0.9))' },
-  slotBox: { width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', border: '2px solid #92400e', background: 'rgba(20, 10, 5, 0.85)', boxShadow: '0 4px 6px rgba(0,0,0,0.5), inset 0 0 10px rgba(217, 119, 6, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease', overflow: 'hidden' },
+  slotBox: { width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', border: '2px solid #b45309', background: 'rgba(30, 15, 5, 0.9)', boxShadow: '0 4px 6px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' },
   slotPlaceholder: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', padding: '2px' },
-  slotIconImg: { width: '40%', height: '40%', objectFit: 'contain', filter: 'grayscale(100%) brightness(1.4) drop-shadow(0 2px 3px rgba(0,0,0,0.8))', opacity: '0.85' },
-  slotLabel: { fontSize: '9px', fontFamily: 'Palatino Linotype', color: '#9ca3af', fontWeight: 'bold', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' },
-  itemText: { fontSize: '10px', fontFamily: 'Palatino Linotype', color: '#f3f4f6', fontWeight: 'bold', textAlign: 'center', padding: '4px' },
+  slotIconImg: { width: '40%', height: '40%', objectFit: 'contain', filter: 'grayscale(100%) brightness(1.6)', opacity: '0.9' },
+  slotLabel: { fontSize: '9px', fontFamily: 'Palatino Linotype', color: '#d1d5db', fontWeight: 'bold', textAlign: 'center', textTransform: 'uppercase' },
+  itemText: { fontSize: '10px', fontFamily: 'Palatino Linotype', color: '#ffffff', fontWeight: 'bold', textAlign: 'center', padding: '4px' },
   inventoryContainer: { display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '0', boxSizing: 'border-box' },
   inventoryHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '10px' },
-  inventoryCapacity: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '14px', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.8)' },
+  inventoryCapacity: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '14px', fontWeight: 'bold' },
   inventoryGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', width: '100%', maxWidth: '440px', marginBottom: '15px' },
-  inventorySlot: { aspectRatio: '1 / 1', borderRadius: '8px', border: '2px solid #57534e', background: 'rgba(38, 38, 38, 0.85)', boxShadow: 'inset 0 0 8px rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', cursor: 'pointer' },
-  slotNumber: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#a8a29e', fontWeight: 'bold' },
+  inventorySlot: { aspectRatio: '1 / 1', borderRadius: '8px', border: '2px solid #78716c', background: 'rgba(40, 40, 40, 0.95)', boxShadow: 'inset 0 0 8px rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', cursor: 'pointer' },
+  slotNumber: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#d1d5db', fontWeight: 'bold' },
   inventoryItemContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2px' },
-  itemName: { fontFamily: 'Palatino Linotype', fontSize: '11px', color: '#f3f4f6', textAlign: 'center' },
+  itemName: { fontFamily: 'Palatino Linotype', fontSize: '11px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold' },
   itemCount: { fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#fbbf24', fontWeight: 'bold' },
-  inventoryHint: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#fef08a', textAlign: 'center', maxWidth: '440px', margin: '10px 0 0 0', lineHeight: '1.4', fontWeight: 'bold', backgroundColor: 'transparent', border: 'none', boxShadow: 'none', textShadow: '0 2px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.8)' },
-  placeholderTabContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px', background: 'rgba(20, 10, 5, 0.85)', border: '2px solid #92400e', borderRadius: '10px', width: '100%', boxSizing: 'border-box', marginTop: '10px' },
-  modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modalBox: { background: 'rgba(20, 10, 5, 0.95)', border: '2px solid #92400e', borderRadius: '10px', padding: '20px', width: '380px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.8)' },
-  modalTitle: { color: '#fbbf24', fontSize: '16px', margin: '0 0 15px 0', fontFamily: 'Palatino Linotype' },
+  inventoryHint: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#fef08a', textAlign: 'center', maxWidth: '440px', margin: '10px 0 0 0', lineHeight: '1.4', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
+  placeholderTabContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px', background: 'rgba(30, 15, 5, 0.9)', border: '2px solid #b45309', borderRadius: '10px', width: '100%', boxSizing: 'border-box', marginTop: '10px' },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+  modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
+  modalCloseX: { position: 'absolute', top: '10px', right: '12px', background: 'transparent', color: '#fbbf24', border: 'none', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' },
+  modalTitle: { color: '#fbbf24', fontSize: '18px', margin: '0 0 15px 0', fontFamily: 'Palatino Linotype', fontWeight: 'bold' },
+  modalText: { color: '#ffffff', fontSize: '14px', fontFamily: 'Palatino Linotype', lineHeight: '1.5', margin: '0 0 15px 0' },
   historyList: { maxHeight: '220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px', textAlign: 'left' },
-  historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '6px 10px', borderRadius: '4px', fontSize: '11px', fontFamily: 'Palatino Linotype' },
-  historyReason: { color: '#e5e7eb', flex: 1, margin: '0 10px', wordBreak: 'break-word' },
-  historyDate: { color: '#9ca3af', fontSize: '9px', whiteSpace: 'nowrap' },
-  closeModalBtn: { background: '#b45309', color: '#fef3c7', border: '1px solid #fbbf24', padding: '6px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype' }
+  historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(50, 25, 10, 0.8)', padding: '8px 10px', borderRadius: '4px', fontSize: '12px', fontFamily: 'Palatino Linotype', border: '1px solid #78350f' },
+  historyReason: {color: '#ffffff', flex: 1, margin: '0 10px', wordBreak: 'break-word' },
+  historyDate: { color: '#d1d5db', fontSize: '10px', whiteSpace: 'nowrap' },
+  closeModalBtn: { background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#ffffff', border: '1px solid #fbbf24', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', fontSize: '14px', width: '100%' }
 };
