@@ -64,6 +64,12 @@ export default function App() {
     setUserSession(null);
     setUserProfile(null);
     setView('login');
+    // Vymazání zadaných údajů z formuláře při odhlášení
+    setNickname('');
+    setEmail('');
+    setPassword('');
+    setNewPassword('');
+    setMessage('');
   };
 
   const handleSubmit = async (e) => {
@@ -185,6 +191,7 @@ export default function App() {
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
                   required
+                  autoComplete="off"
                   style={styles.input}
                 />
               </div>
@@ -200,6 +207,7 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                    autoComplete="off"
                     style={styles.input}
                   />
                 </div>
@@ -212,6 +220,7 @@ export default function App() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+                    autoComplete="new-password"
                     style={styles.input}
                   />
                 </div>
@@ -239,6 +248,7 @@ export default function App() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  autoComplete="current-password"
                   style={styles.input}
                 />
               </div>
@@ -253,6 +263,7 @@ export default function App() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
+                  autoComplete="new-password"
                   style={styles.input}
                 />
               </div>

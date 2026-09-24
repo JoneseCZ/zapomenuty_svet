@@ -4,6 +4,8 @@ import UserHeader from './UserHeader';
 import { supabase } from './App';
 import PlayerDashboardRecipes from './PlayerDashboardRecipes';
 import PlayerDashboardCrafting from './PlayerDashboardCrafting';
+import PlayerDashboardMessages from './PlayerDashboardMessages';
+import PlayerDashboardQuests from './PlayerDashboardQuests';
 
 const formatDate = (dateObj = new Date()) => {
   try {
@@ -35,12 +37,29 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
   });
 
   const [gold, setGold] = useState(userProfile?.gold || 0);
+  const [exp, setExp] = useState(userProfile?.exp || 0);
   
-  // Stavy pro inventář a přebytky (zápis pro Supabase a bezpečný fallback)
+  const currentLevel = Math.floor(exp / 1000) + 1;
+  const currentLevelExp = exp % 1000;
+  const nextLevelExp = 1000;
+  
   const [inventory, setInventory] = useState(Array(20).fill(null));
   const [overflowItems, setOverflowItems] = useState([]);
 
-  // Funkce pro uložení inventáře a přebytků přímo do Supabase
+  // Stavy pro kontrolu nepřečtených úkolů (pro notifikaci na tlačítku)
+  const [hasUnreadQuests, setHasUnreadQuests] = useState(false);
+
+  const [hasUnreadGoldHistory, setHasUnreadGoldHistory] = useState(false);
+  const [hasUnreadExpHistory, setHasUnreadExpHistory] = useState(false);
+  const [lastSeenGoldCount, setLastSeenGoldCount] = useState(() => {
+    const saved = localStorage.getItem('last_seen_gold_count');
+    return saved ? Number(saved) : 0;
+  });
+  const [lastSeenExpCount, setLastSeenExpCount] = useState(() => {
+    const saved = localStorage.getItem('last_seen_exp_count');
+    return saved ? Number(saved) : 0;
+  });
+
   const saveInventoryToSupabase = async (newInventory, newOverflow) => {
     setInventory(newInventory);
     setOverflowItems(newOverflow);
@@ -60,14 +79,13 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     }
   };
 
-  // Načtení dat ze Supabase při startu
   useEffect(() => {
     if (!userProfile?.id) return;
 
     const fetchPlayerData = async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('inventory, equipment, gold, overflow_items')
+        .select('inventory, equipment, gold, overflow_items, exp')
         .eq('id', userProfile.id)
         .single();
 
@@ -78,6 +96,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
 
       if (data) {
         if (data.gold !== undefined) setGold(data.gold);
+        if (data.exp !== undefined) setExp(data.exp);
         if (data.equipment) setEquipment(data.equipment);
         if (data.overflow_items) setOverflowItems(data.overflow_items);
         if (data.inventory && Array.isArray(data.inventory)) {
@@ -87,12 +106,54 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     };
 
     fetchPlayerData();
+    checkUnreadQuests();
   }, [userProfile?.id]);
+
+  // Kontrola, zda existují aktivní úkoly, které hráč ještě nečetl nebo nesplnil
+  const checkUnreadQuests = async () => {
+    if (!userProfile?.id) return;
+    const nowISO = new Date().toISOString();
+    
+    // 1. Získáme aktivní úkoly
+    const { data: questsData } = await supabase
+      .from('quests')
+      .select('id')
+      .gt('expires_at', nowISO);
+
+    if (!questsData || questsData.length === 0) {
+      setHasUnreadQuests(false);
+      return;
+    }
+
+    // 2. Získáme stav splnění/přečtení pro hráče
+    const { data: playerQuestsData } = await supabase
+      .from('player_quests')
+      .select('quest_id, read_at, completed')
+      .eq('user_id', userProfile.id);
+
+    const pqMap = {};
+    (playerQuestsData || []).forEach(pq => {
+      pqMap[pq.quest_id] = pq;
+    });
+
+    // Hledáme, jestli je nějaký aktivní úkol, který hráč vůbec nečetl (nemá read_at) nebo nemá splněno
+    const unreadExists = questsData.some(q => {
+      const pq = pqMap[q.id];
+      return !pq || !pq.read_at || !pq.completed;
+    });
+
+    setHasUnreadQuests(unreadExists);
+  };
 
   const [inventoryActionModal, setInventoryActionModal] = useState(null);
   const [goldHistory, setGoldHistory] = useState([]);
+  const [expHistory, setExpHistory] = useState([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-  const [activeNotification, setActiveNotification] = useState(null);
+  const [isExpHistoryModalOpen, setIsExpHistoryModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [settingsMessage, setSettingsMessage] = useState('');
+  
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('postava');
 
@@ -101,8 +162,15 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     try {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
       await supabase
         .from('gold_history')
+        .delete()
+        .eq('user_id', userProfile.id)
+        .lt('created_at', thirtyDaysAgo.toISOString());
+
+      await supabase
+        .from('exp_history')
         .delete()
         .eq('user_id', userProfile.id)
         .lt('created_at', thirtyDaysAgo.toISOString());
@@ -110,78 +178,130 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       console.warn("Mazání staré historie selhalo:", cleanErr);
     }
 
-    const { data, error } = await supabase
+    const { data: goldData, error: goldError } = await supabase
       .from('gold_history')
       .select('*')
       .eq('user_id', userProfile.id)
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
-      setGoldHistory(data.map(item => ({
+    if (!goldError && goldData) {
+      setGoldHistory(goldData.map(item => ({
         date: formatDate(item.created_at),
         change: item.change > 0 ? `+${item.change}` : `${item.change}`,
         reason: item.reason || 'Změna zlaťáků'
       })));
+
+      if (lastSeenGoldCount === 0 && goldData.length > 0) {
+        setLastSeenGoldCount(goldData.length);
+        localStorage.setItem('last_seen_gold_count', goldData.length);
+      } else if (goldData.length > lastSeenGoldCount && lastSeenGoldCount !== 0) {
+        setHasUnreadGoldHistory(true);
+      }
+    }
+
+    const { data: expData, error: expError } = await supabase
+      .from('exp_history')
+      .select('*')
+      .eq('user_id', userProfile.id)
+      .order('created_at', { ascending: false });
+
+    if (!expError && expData) {
+      setExpHistory(expData.map(item => ({
+        date: formatDate(item.created_at),
+        change: item.change > 0 ? `+${item.change}` : `${item.change}`,
+        reason: item.reason || 'Změna zkušeností'
+      })));
+
+      if (lastSeenExpCount === 0 && expData.length > 0) {
+        setLastSeenExpCount(expData.length);
+        localStorage.setItem('last_seen_exp_count', expData.length);
+      } else if (expData.length > lastSeenExpCount && lastSeenExpCount !== 0) {
+        setHasUnreadExpHistory(true);
+      }
     }
   };
 
   useEffect(() => {
     if (userProfile?.id) {
       setGold(userProfile.gold || 0);
+      setExp(userProfile.exp || 0);
       fetchAndCleanHistory();
     }
   }, [userProfile?.id]);
 
-  useEffect(() => {
-    if (!userProfile?.id) return;
-    const channelName = `notifications_user_${userProfile.id}`;
-    
-    const notificationChannel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userProfile.id}` },
-        (payload) => {
-          const newNotif = payload.new;
-          if (newNotif) {
-            const rewardAmount = newNotif.amount || 0;
-            const messageText = newNotif.message || 'Zpráva od admina';
-            setActiveNotification({ amount: rewardAmount, message: messageText });
-            if (rewardAmount !== 0) setGold(prev => prev + rewardAmount);
-            setGoldHistory(prev => [{
-              date: formatDate(newNotif.created_at || new Date()),
-              change: `${rewardAmount >= 0 ? '+' : ''}${rewardAmount}`,
-              reason: messageText
-            }, ...prev]);
-          }
-        }
-      )
-      .subscribe();
+  const handleOpenGoldHistory = () => {
+    setIsHistoryModalOpen(true);
+    setHasUnreadGoldHistory(false);
+    setLastSeenGoldCount(goldHistory.length);
+    localStorage.setItem('last_seen_gold_count', goldHistory.length);
+  };
 
-    return () => {
-      supabase.removeChannel(notificationChannel);
-    };
-  }, [userProfile?.id]);
+  const handleOpenExpHistory = () => {
+    setIsExpHistoryModalOpen(true);
+    setHasUnreadExpHistory(false);
+    setLastSeenExpCount(expHistory.length);
+    localStorage.setItem('last_seen_exp_count', expHistory.length);
+  };
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setSettingsMessage('');
+    if (!newPasswordInput || newPasswordInput.length < 6) {
+      setSettingsMessage('Heslo musí mít alespoň 6 znaků.');
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPasswordInput });
+    if (error) {
+      setSettingsMessage(`Chyba: ${error.message}`);
+    } else {
+      setSettingsMessage('Heslo bylo úspěšně změněno!');
+      setNewPasswordInput('');
+    }
+  };
+
+  const handleDiscardItem = () => {
+    if (!inventoryActionModal) return;
+    const { index } = inventoryActionModal;
+    
+    const newInv = [...inventory];
+    newInv[index] = null;
+    
+    saveInventoryToSupabase(newInv, overflowItems);
+    setInventoryActionModal(null);
+  };
 
   const characterImage = userProfile?.gender === 'žena' ? '/postava_zena.png' : '/postava_muz.png';
   const baseSlots = 10;
   const extraSlotsFromBackpack = equipment.batoh ? (equipment.batoh.extraSlots || 10) : 0;
   const totalInventorySlots = baseSlots + extraSlotsFromBackpack;
 
-  // Dynamické nastavení pozadí podle aktivní záložky (správný název souboru z public složky)
   const currentBackground = activeTab === 'dilna' ? 'url(/crafting_pozadi.png)' : 'url(/pozadi_mlha.jpg)';
 
-  const renderNavButton = (tabName, label) => {
+  const renderNavButton = (tabName, label, hasBadge = false) => {
     const isActive = activeTab === tabName;
     return (
-      <button 
-        style={{ ...styles.navButton, ...(isActive ? styles.navButtonActive : {}) }}
-        onClick={() => { setActiveTab(tabName); setMobileMenuOpen(false); }}
-      >
-        {label}
-      </button>
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        <button 
+          style={{ 
+            ...styles.navButton, 
+            ...(isActive ? styles.navButtonActive : {}),
+            ...(hasBadge ? styles.navButtonAlert : {}) 
+          }}
+          onClick={() => { 
+            setActiveTab(tabName); 
+            setMobileMenuOpen(false); 
+            if (tabName === 'ukoly') setHasUnreadQuests(false); // po kliknutí můžeme badge schovat nebo nechat
+          }}
+        >
+          {label}
+        </button>
+        {hasBadge && <span style={styles.navBadgeDot}></span>}
+      </div>
     );
   };
+
+  const expPercentage = Math.min(Math.max((currentLevelExp / nextLevelExp) * 100, 0), 100);
+  const playerTitle = `${userProfile?.nickname || 'Hrdina'}`;
 
   return (
     <div style={{ ...styles.container, backgroundImage: currentBackground }}>
@@ -192,12 +312,28 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           <img src="/icon_zlato.png" alt="Zlaťáky" style={styles.goldIcon} />
         </div>
 
-        <span className="player-name" style={styles.nameValueTop}>{userProfile?.nickname || 'Hrdina'}</span>
+        <span className="player-name desktop-name" style={styles.nameValueTop}>{playerTitle}</span>
 
         <div style={styles.topLeftGroup}>
-          <button style={styles.historyIconButton} onClick={() => setIsHistoryModalOpen(true)} title="Historie zlatáků">📜</button>
+          <PlayerDashboardMessages session={userProfile} supabase={supabase} />
+          
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <button style={styles.iconButtonPlain} onClick={handleOpenExpHistory} title="Historie zkušeností">📖</button>
+            {hasUnreadExpHistory && <span style={styles.notificationBadge}>!</span>}
+          </div>
+
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <button style={styles.iconButtonPlain} onClick={handleOpenGoldHistory} title="Historie zlaťáků">📜</button>
+            {hasUnreadGoldHistory && <span style={styles.notificationBadge}>!</span>}
+          </div>
+
+          <button style={styles.iconButtonPlain} onClick={() => setIsSettingsModalOpen(true)} title="Nastavení / Změna hesla">⚙️</button>
           <button onClick={onLogout} className="logout-btn" style={styles.logoutButton}>Odhlásit se</button>
         </div>
+      </div>
+
+      <div className="mobile-name-wrapper">
+        <span style={styles.nameValueMobile}>{playerTitle}</span>
       </div>
 
       <div style={styles.mainContent}>
@@ -213,36 +349,51 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           {renderNavButton('recepty', 'Recepty')}
           {renderNavButton('dilna', 'Dílna')}
           {renderNavButton('oznamovatel', 'Oznámovatel')}
-          {renderNavButton('ukoly', 'Úkoly')}
+          {renderNavButton('ukoly', 'Úkoly', hasUnreadQuests)}
           {renderNavButton('mapa', 'Mapa')}
         </div>
 
-        {/* POSTAVA */}
         {activeTab === 'postava' && (
-          <div className="dashboard-grid" style={styles.dashboardGrid}>
-            <div className="slot-column" style={styles.column}>
-              <Slot label="Hlava" iconFile="icon_hlava.png" item={equipment.hlava} />
-              <Slot label="Pravá ruka" iconFile="icon_prava_ruka.png" item={equipment.pravaRuka} />
-              <Slot label="Trup" iconFile="icon_trup.png" item={equipment.trup} />
-              <Slot label="Opasek" iconFile="icon_opasek.png" item={equipment.opasek} />
-              <Slot label="Rukavice" iconFile="icon_rukavice.png" item={equipment.rukavice} />
+          <div style={styles.characterMainWrapper}>
+            <div style={styles.levelPanel}>
+              <div style={styles.levelTitle}>Hráč LVL {currentLevel}</div>
+              
+              <div style={styles.fuseContainer}>
+                <div style={{ ...styles.fuseFill, width: `${expPercentage}%` }}>
+                  <div style={styles.fuseSpark}>🔥</div>
+                </div>
+              </div>
+
+              <div style={styles.fuseStatsRow}>
+                <span>{currentLevelExp} XP</span>
+                <span>{nextLevelExp} XP</span>
+              </div>
             </div>
 
-            <div style={styles.characterContainer}>
-              <img src={characterImage} alt="Postava hrdiny" className="character-img" style={styles.characterImg} />
-            </div>
+            <div className="dashboard-grid" style={styles.dashboardGrid}>
+              <div className="slot-column" style={styles.column}>
+                <Slot label="Hlava" iconFile="icon_hlava.png" item={equipment.hlava} />
+                <Slot label="Pravá ruka" iconFile="icon_prava_ruka.png" item={equipment.pravaRuka} />
+                <Slot label="Trup" iconFile="icon_trup.png" item={equipment.trup} />
+                <Slot label="Opasek" iconFile="icon_opasek.png" item={equipment.opasek} />
+                <Slot label="Rukavice" iconFile="icon_rukavice.png" item={equipment.rukavice} />
+              </div>
 
-            <div className="slot-column" style={styles.column}>
-              <Slot label="Plášť" iconFile="icon_plast.png" item={equipment.plast} />
-              <Slot label="Levá ruka" iconFile="icon_leva_ruka.png" item={equipment.levaRuka} />
-              <Slot label="Kalhoty" iconFile="icon_kalhoty.png" item={equipment.kalhoty} />
-              <Slot label="Boty" iconFile="icon_boty.png" item={equipment.boty} />
-              <Slot label="Batoh" iconFile="icon_batoh.png" item={equipment.batoh} />
+              <div style={styles.characterContainer}>
+                <img src={characterImage} alt="Postava hrdiny" className="character-img" style={styles.characterImg} />
+              </div>
+
+              <div className="slot-column" style={styles.column}>
+                <Slot label="Plášť" iconFile="icon_plast.png" item={equipment.plast} />
+                <Slot label="Levá ruka" iconFile="icon_leva_ruka.png" item={equipment.levaRuka} />
+                <Slot label="Kalhoty" iconFile="icon_kalhoty.png" item={equipment.kalhoty} />
+                <Slot label="Boty" iconFile="icon_boty.png" item={equipment.boty} />
+                <Slot label="Batoh" iconFile="icon_batoh.png" item={equipment.batoh} />
+              </div>
             </div>
           </div>
         )}
 
-        {/* INVENTÁŘ */}
         {activeTab === 'inventar' && (
           <div style={styles.inventoryContainer}>
             <div style={styles.inventoryHeader}>
@@ -277,7 +428,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           </div>
         )}
 
-        {/* DÍLNA A VÝROBA */}
         {activeTab === 'dilna' && (
           <PlayerDashboardCrafting 
             inventory={inventory} 
@@ -287,7 +437,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           />
         )}
 
-        {/* MAPA */}
         {activeTab === 'mapa' && (
           <PlayerDashboardMap 
             gold={gold}
@@ -300,7 +449,9 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
 
         {activeTab === 'recepty' && <PlayerDashboardRecipes userProfile={userProfile} />}
 
-        {['oznamovatel', 'ukoly'].includes(activeTab) && (
+        {activeTab === 'ukoly' && <PlayerDashboardQuests userProfile={userProfile} />}
+
+        {activeTab === 'oznamovatel' && (
           <div style={styles.placeholderTabContent}>
             <h2 style={{ fontFamily: 'Palatino Linotype', color: '#f3f4f6', textTransform: 'capitalize' }}>Záložka: {activeTab}</h2>
             <p style={{ fontFamily: 'Palatino Linotype', color: '#9ca3af' }}>Tento obsah se připravuje...</p>
@@ -308,63 +459,33 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         )}
       </div>
 
-      {/* MODÁLNÍ OKNO PRO AKCE S PŘEDMĚTEM */}
+      {/* MODÁLNÍ OKNO PRO AKCE S PŘEDMĚTEM V INVENTÁŘI */}
       {inventoryActionModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
             <button onClick={() => setInventoryActionModal(null)} style={styles.modalCloseX}>✕</button>
-            <h3 style={styles.modalTitle}>Správa suroviny: {inventoryActionModal.item.name}</h3>
-            <p style={styles.modalText}>
-              Množství v slotu: <b style={{color: '#fcd34d'}}>{inventoryActionModal.item.count}x</b><br/><br/>
-              ⚠️ Pozor: Vyhozením surovina nadobro zmizí!
+            <h3 style={styles.modalTitle}>Předmět: {inventoryActionModal.item.name}</h3>
+            <p style={{ color: '#d1d5db', fontSize: '13px', fontFamily: 'Palatino Linotype', marginBottom: '15px' }}>
+              Množství: {inventoryActionModal.item.count}x
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <button 
-                style={{ ...styles.closeModalBtn, background: '#dc2626', borderColor: '#f87171' }} 
-                onClick={() => {
-                  const newInv = [...inventory];
-                  newInv[inventoryActionModal.index] = null;
-                  saveInventoryToSupabase(newInv, overflowItems);
-                  setInventoryActionModal(null);
-                }}
+                onClick={handleDiscardItem} 
+                style={{ ...styles.closeModalBtn, background: 'linear-gradient(to bottom, #dc2626, #991b1b)', borderColor: '#ef4444' }}
               >
-                🗑️ Vyhodit (nadobro zmizí)
+                🗑️ Vyhodit předmět
               </button>
-              <button 
-                style={styles.closeModalBtn} 
-                onClick={() => setInventoryActionModal(null)}
-              >
-                Ponechat na pozdější prodej
-              </button>
+              <button onClick={() => setInventoryActionModal(null)} style={styles.closeModalBtn}>Zavřít</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* VYSKAKOVACÍ OKNO ADMIN ZPRÁVY */}
-      {activeNotification && (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalBox, borderColor: '#fbbf24' }}>
-            <h3 style={styles.modalTitle}>⚔️ Zpráva od správce</h3>
-            <div style={{ margin: '15px 0', fontFamily: 'Palatino Linotype', color: '#ffffff', fontSize: '14px', lineHeight: '1.5' }}>
-              <p style={{ fontStyle: 'italic', marginBottom: '10px', color: '#fef08a' }}>„{activeNotification.message}“</p>
-              {activeNotification.amount !== 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '16px', fontWeight: 'bold', color: '#4ade80', marginTop: '10px' }}>
-                  <span>{activeNotification.amount > 0 ? `+${activeNotification.amount}` : activeNotification.amount}</span>
-                  <span>🪙 zlaťáků</span>
-                </div>
-              )}
-            </div>
-            <button style={styles.closeModalBtn} onClick={() => setActiveNotification(null)}>Převzít</button>
-          </div>
-        </div>
-      )}
-
-      {/* HISTORIE */}
+      {/* HISTORIE ZLÁTÁKŮ */}
       {isHistoryModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
-            <h3 style={styles.modalTitle}>Historie zlatáků (za 30 dnů)</h3>
+            <h3 style={styles.modalTitle}>Historie zlaťáků (za 30 dnů)</h3>
             <div style={styles.historyList}>
               {goldHistory.length === 0 ? (
                 <span style={{color: '#9ca3af', fontSize: '12px'}}>Zatím žádná historie</span>
@@ -383,16 +504,74 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         </div>
       )}
 
+      {/* HISTORIE ZKUŠENOSTI */}
+      {isExpHistoryModalOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <h3 style={styles.modalTitle}>📖 Historie zkušeností</h3>
+            <div style={styles.historyList}>
+              {expHistory.length === 0 ? (
+                <span style={{color: '#9ca3af', fontSize: '12px'}}>Zatím žádné získané zkušenosti</span>
+              ) : (
+                expHistory.map((item, idx) => (
+                  <div key={idx} style={styles.historyItem}>
+                    <span style={{color: '#fbbf24', fontWeight: 'bold'}}>{item.change} XP</span>
+                    <span style={styles.historyReason}>{item.reason}</span>
+                    <span style={styles.historyDate}>{item.date}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            <button style={styles.closeModalBtn} onClick={() => setIsExpHistoryModalOpen(false)}>Zavřít</button>
+          </div>
+        </div>
+      )}
+
+      {/* NASTAVENÍ / ZMĚNA HESLA */}
+      {isSettingsModalOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <button onClick={() => setIsSettingsModalOpen(false)} style={styles.modalCloseX}>✕</button>
+            <h3 style={styles.modalTitle}>⚙️ Nastavení účtu</h3>
+            <form onSubmit={handlePasswordChange} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+              <label style={{ color: '#d1d5db', fontSize: '13px', textAlign: 'left', fontFamily: 'Palatino Linotype' }}>Změna hesla:</label>
+              <input 
+                type="password"
+                placeholder="Nové heslo (min. 6 znaků)"
+                value={newPasswordInput}
+                onChange={(e) => setNewPasswordInput(e.target.value)}
+                style={styles.settingsInput}
+              />
+              <button type="submit" style={styles.closeModalBtn}>Uložit nové heslo</button>
+            </form>
+            {settingsMessage && <p style={{ color: settingsMessage.includes('úspešně') ? '#4ade80' : '#f87171', fontSize: '12px', marginTop: '10px', fontFamily: 'Palatino Linotype' }}>{settingsMessage}</p>}
+          </div>
+        </div>
+      )}
+
       <style>{`
-        .character-img { max-width: 190px !important; }
-        .slot-column { max-width: 95px !important; }
+        .character-img { max-width: 170px !important; }
+        .slot-column { max-width: 90px !important; }
         .logout-btn { padding: 6px 14px !important; font-size: 12px !important; }
         .mobile-menu-toggle-container { display: none; }
+        .mobile-name-wrapper { display: none; }
+
+        @keyframes pulseGlow {
+          0% { filter: brightness(0.65) contrast(1.3) drop-shadow(0 0 2px #dc2626); }
+          50% { filter: brightness(1.1) contrast(1.3) drop-shadow(0 0 8px #ef4444); }
+          100% { filter: brightness(0.65) contrast(1.3) drop-shadow(0 0 2px #dc2626); }
+        }
+
+        .nav-alert-btn {
+          animation: pulseGlow 1.5s infinite ease-in-out;
+        }
+
         @media (max-width: 768px) {
+          .desktop-name { display: none !important; }
+          .mobile-name-wrapper { display: flex; justify-content: center; width: 100%; margin-bottom: 6px; }
           .dashboard-grid { gap: 10px !important; }
-          .character-img { max-width: 130px !important; }
-          .slot-column { max-width: 70px !important; }
-          .player-name { font-size: 18px !important; }
+          .character-img { max-width: 120px !important; }
+          .slot-column { max-width: 65px !important; }
           .logout-btn { padding: 4px 10px !important; font-size: 10px !important; }
           .mobile-menu-toggle-container { display: block; width: 100%; margin-bottom: 8px; text-align: center; }
           .game-navigation { display: none !important; flex-direction: column !important; width: 100% !important; margin-bottom: 12px !important; gap: 8px !important; }
@@ -420,19 +599,74 @@ function Slot({ label, iconFile, item }) {
 
 const styles = {
   container: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center', minHeight: '100vh', backgroundSize: 'cover', backgroundPosition: 'center', padding: '10px', boxSizing: 'border-box', overflowX: 'hidden', position: 'relative' },
-  topBar: { position: 'relative', width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', zIndex: 10 },
-  topLeftGroup: { display: 'flex', alignItems: 'center', gap: '10px' },
-  historyIconButton: { background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#fff', border: '1px solid #fbbf24', borderRadius: '50%', width: '32px', height: '32px', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.4)' },
+  topBar: { position: 'relative', width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', zIndex: 10 },
+  topLeftGroup: { display: 'flex', alignItems: 'center', gap: '8px', zIndex: 2 },
+  iconButtonPlain: { background: 'transparent', border: 'none', fontSize: '22px', cursor: 'pointer', padding: '0', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))', transition: 'transform 0.2s', position: 'relative' },
+  notificationBadge: {
+    position: 'absolute',
+    top: '-2px',
+    right: '-2px',
+    backgroundColor: '#dc2626',
+    color: '#fff',
+    fontSize: '11px',
+    fontWeight: 'bold',
+    width: '16px',
+    height: '16px',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px solid #fee2e2',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+    zIndex: 5
+  },
   logoutButton: { borderRadius: '20px', border: '1px solid #7f1d1d', background: 'linear-gradient(to bottom, #dc2626, #991b1b)', color: '#fee2e2', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', boxShadow: '0 4px 6px rgba(0,0,0,0.5)' },
-  nameValueTop: { fontFamily: 'Palatino Linotype', fontSize: '24px', color: '#ffffff', fontWeight: 'bold', textShadow: '0px 2px 6px rgba(0,0,0,0.9)', letterSpacing: '1px', textAlign: 'center' },
-  goldContainer: { display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(30, 15, 5, 0.95)', padding: '4px 10px', borderRadius: '12px', border: '1px solid #f59e0b', boxShadow: '0 2px 4px rgba(0,0,0,0.5)' },
+  
+  nameValueTop: { 
+    position: 'absolute', 
+    left: '50%', 
+    transform: 'translateX(-50%)', 
+    fontFamily: 'Palatino Linotype', 
+    fontSize: '22px', 
+    color: '#ffffff', 
+    fontWeight: 'bold', 
+    textShadow: '0px 2px 6px rgba(0,0,0,0.9)', 
+    letterSpacing: '1px', 
+    pointerEvents: 'none',
+    zIndex: 1 
+  },
+
+  nameValueMobile: {
+    fontFamily: 'Palatino Linotype',
+    fontSize: '20px',
+    color: '#ffffff',
+    fontWeight: 'bold',
+    textShadow: '0px 2px 6px rgba(0,0,0,0.9)',
+    letterSpacing: '1px',
+    textAlign: 'center'
+  },
+
+  goldContainer: { display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(30, 15, 5, 0.95)', padding: '4px 10px', borderRadius: '12px', border: '1px solid #f59e0b', boxShadow: '0 2px 4px rgba(0,0,0,0.5)', zIndex: 2 },
   goldText: { fontFamily: 'Palatino Linotype', fontSize: '14px', color: '#fcd34d', fontWeight: 'bold' },
-  goldIcon: { width: '16px', height: '16px', objectFit: 'contain' },
+  goldIcon: { width: '18px', height: '18px', objectFit: 'contain' },
+
   mainContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '100%' },
-  navigationContainer: { display: 'flex', gap: '8px', marginBottom: '15px', justifyContent: 'center', width: '100%', flexWrap: 'nowrap' },
-  navButton: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '12px 18px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s' },
+  navigationContainer: { display: 'flex', gap: '8px', marginBottom: '10px', justifyContent: 'center', width: '100%', flexWrap: 'nowrap' },
+  navButton: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '10px 16px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap', transition: 'all 0.2s' },
   navButtonActive: { filter: 'brightness(1.15) contrast(1.15) drop-shadow(0 0 8px rgba(245, 158, 11, 0.9))', transform: 'translateY(-3px)' },
-  mobileMenuBtn: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '14px 20px', cursor: 'pointer', fontWeight: 'bold', fontSize: '15px', width: '100%' },
+  navButtonAlert: { animation: 'pulseGlow 1.5s infinite ease-in-out' },
+  navBadgeDot: { position: 'absolute', top: '2px', right: '4px', width: '10px', height: '10px', backgroundColor: '#dc2626', borderRadius: '50%', border: '1px solid #fee2e2' },
+  mobileMenuBtn: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '12px 20px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', width: '100%' },
+  
+  characterMainWrapper: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '450px' },
+  levelPanel: { width: '100%', background: 'transparent', border: 'none', borderRadius: '0', padding: '4px 0', marginBottom: '8px', boxSizing: 'border-box', boxShadow: 'none' },
+  levelTitle: { fontFamily: 'Palatino Linotype', fontSize: '16px', color: '#fbbf24', fontWeight: 'bold', textAlign: 'center', marginBottom: '4px', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
+  
+  fuseContainer: { width: '100%', height: '10px', background: '#2a1810', borderRadius: '5px', border: '1px solid #57341e', position: 'relative', overflow: 'visible', marginBottom: '4px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.9)' },
+  fuseFill: { height: '100%', background: 'linear-gradient(90deg, #b45309, #f59e0b, #ef4444)', borderRadius: '4px', position: 'relative', transition: 'width 0.4s ease' },
+  fuseSpark: { position: 'absolute', right: '-10px', top: '-8px', fontSize: '16px', filter: 'drop-shadow(0 0 4px #f59e0b)' },
+  fuseStatsRow: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontFamily: 'Palatino Linotype', color: '#d1d5db', fontWeight: 'bold', textShadow: '0 1px 3px rgba(0,0,0,0.9)' },
+
   dashboardGrid: { display: 'flex', justifyContent: 'space-between', alignContent: 'center', alignItems: 'center', width: '100%', gap: '15px' },
   column: { display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 },
   characterContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1.5, background: 'transparent', border: 'none', boxShadow: 'none' },
@@ -443,7 +677,7 @@ const styles = {
   slotLabel: { fontSize: '9px', fontFamily: 'Palatino Linotype', color: '#d1d5db', fontWeight: 'bold', textAlign: 'center', textTransform: 'uppercase' },
   itemText: { fontSize: '10px', fontFamily: 'Palatino Linotype', color: '#ffffff', fontWeight: 'bold', textAlign: 'center', padding: '4px' },
   inventoryContainer: { display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '0', boxSizing: 'border-box' },
-  inventoryHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '10px' },
+  inventoryHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center',marginBottom: '10px' },
   inventoryCapacity: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '14px', fontWeight: 'bold' },
   inventoryGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', width: '100%', maxWidth: '440px', marginBottom: '15px' },
   inventorySlot: { aspectRatio: '1 / 1', borderRadius: '8px', border: '2px solid #78716c', background: 'rgba(40, 40, 40, 0.95)', boxShadow: 'inset 0 0 8px rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', cursor: 'pointer' },
@@ -457,7 +691,7 @@ const styles = {
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
   modalCloseX: { position: 'absolute', top: '10px', right: '12px', background: 'transparent', color: '#fbbf24', border: 'none', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' },
   modalTitle: { color: '#fbbf24', fontSize: '18px', margin: '0 0 15px 0', fontFamily: 'Palatino Linotype', fontWeight: 'bold' },
-  modalText: { color: '#ffffff', fontSize: '14px', fontFamily: 'Palatino Linotype', lineHeight: '1.5', margin: '0 0 15px 0' },
+  settingsInput: { padding: '8px 10px', borderRadius: '4px', border: '1px solid #8c6239', background: 'rgba(255, 253, 240, 0.9)', color: '#2c1810', fontSize: '14px', fontFamily: 'Palatino Linotype', width: '100%', boxSizing: 'border-box', outline: 'none' },
   historyList: { maxHeight: '220px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px', textAlign: 'left' },
   historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(50, 25, 10, 0.8)', padding: '8px 10px', borderRadius: '4px', fontSize: '12px', fontFamily: 'Palatino Linotype', border: '1px solid #78350f' },
   historyReason: {color: '#ffffff', flex: 1, margin: '0 10px', wordBreak: 'break-word' },

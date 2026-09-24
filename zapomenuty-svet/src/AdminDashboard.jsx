@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './App'; // Import Supabase klienta
+import AdminDashboardInventory from './AdminDashboardInventory';
+import AdminDashboardMessages from './AdminDashboardMessages';
+import AdminDashboardQuests from './AdminDashboardQuests';
+import PlayerDashboardQuests from './PlayerDashboardQuests';
 
 // --- ZÁLOŽKA 1: RECEPTY (Vkládání, Úprava, Mazání a Seznam) ---
 function AdminRecipesTab() {
@@ -305,9 +309,8 @@ function AdminRecipesTab() {
 }
 
 
-// --- ZÁLOŽKA 2: SPRÁVA RECEPTŮ (Přijímá stav zvenku, takže už nikdy neuskakuje) ---
+// --- ZÁLOŽKA 2: SPRÁVA RECEPTŮ ---
 function AdminRecipeManagementTab({ profiles, recipes, playerRecipes, codeAttempts, loading, refreshing, fetchData, viewMode, setViewMode, selectedId, setSelectedId }) {
-  
   if (loading) return <div style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Načítání údajů...</div>;
 
   return (
@@ -323,7 +326,6 @@ function AdminRecipeManagementTab({ profiles, recipes, playerRecipes, codeAttemp
         </button>
       </div>
       
-      {/* Sekce varování před pokusy */}
       <div style={{ marginBottom: '25px' }}>
         <h3 style={{ color: '#ef4444', fontSize: '16px', marginBottom: '10px' }}>⚠️ Pokusy o zadání kódů:</h3>
         {codeAttempts.length === 0 ? (
@@ -489,15 +491,16 @@ function AdminRecipeManagementTab({ profiles, recipes, playerRecipes, codeAttemp
 }
 
 
-// --- HLAVNÍ ADMIN DASHBOARD (Uchovává stavy mimo podřízené komponenty) ---
+// --- HLAVNÍ ADMIN DASHBOARD ---
 export default function AdminDashboard({ userProfile, onLogout }) {
   const [players, setPlayers] = useState([]);
   const [formData, setFormData] = useState({});
+  const [expFormData, setExpFormData] = useState({});
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState(null);
   const [activeTab, setActiveTab] = useState('players'); 
 
-  // Stav pro správu receptů přesunutý SEM, aby se nemazal při přepínání záložek
+  // Stavy pro správu receptů
   const [mgmtProfiles, setMgmtProfiles] = useState([]);
   const [mgmtRecipes, setMgmtRecipes] = useState([]);
   const [mgmtPlayerRecipes, setMgmtPlayerRecipes] = useState([]);
@@ -530,7 +533,6 @@ export default function AdminDashboard({ userProfile, onLogout }) {
         };
       }));
 
-      // Pokud ještě není nic vybráno, nastavíme prvního
       setMgmtSelectedId(current => {
         if (current) return current;
         if (mgmtViewMode === 'players' && profData?.length > 0) return profData[0].id;
@@ -573,24 +575,36 @@ export default function AdminDashboard({ userProfile, onLogout }) {
     }));
   };
 
+  const handleExpChange = (userId, field, value) => {
+    setExpFormData(prev => ({
+      ...prev,
+      [userId]: { ...prev[userId], [field]: value }
+    }));
+  };
+
   const handleAddGold = async (userId, e) => {
     e.preventDefault();
     const playerForm = formData[userId] || {};
-    const amount = parseInt(playerForm.amount, 10);
+    const rawAmount = parseInt(playerForm.amount, 10);
+    const mode = playerForm.mode || 'add'; // 'add' nebo 'remove'
     const message = playerForm.message || '';
 
-    if (!amount || amount <= 0 || !message.trim()) {
-      alert('Zadejte platné množství zlaťáků a zprávu.');
+    if (!rawAmount || rawAmount <= 0 || !message.trim()) {
+      alert('Zadejte platné množství zlaťáků a důvod.');
       return;
     }
+
+    // Pokud je zvoleno odebrání, hodnota bude záporná
+    const amount = mode === 'remove' ? -rawAmount : rawAmount;
 
     try {
       const player = players.find(p => p.id === userId);
       if (!player) return;
 
       const currentGold = player.gold || 0;
-      const newGold = currentGold + amount;
+      const newGold = Math.max(0, currentGold + amount); // Zlato nesmí klesnout pod 0
 
+      // 1. Aktualizace zlaťáků v tabulce profiles
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ gold: newGold })
@@ -598,18 +612,72 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       if (updateError) throw updateError;
 
+      // 2. Odeslání oznámení hráči do tabulky notifications
+      const actionText = mode === 'remove' ? `odebráno ${rawAmount}` : `přidáno ${rawAmount}`;
+      const notificationText = `Administrátor ti ${actionText} zlaťáků. Důvod: ${message.trim()}`;
+
       await supabase
         .from('notifications')
-        .insert([{ user_id: userId, amount: amount, message: message, is_read: false }]);
+        .insert([{ user_id: userId, amount: amount, message: notificationText, is_read: false }]);
 
+      // 3. Aktualizace stavu v komponentě
       setPlayers(prev => prev.map(p => p.id === userId ? { ...p, gold: newGold } : p));
-      setFormData(prev => ({ ...prev, [userId]: { amount: '', message: '' } }));
+      setFormData(prev => ({ ...prev, [userId]: { amount: '', message: '', mode: 'add' } }));
 
-      setNotification({ type: 'success', text: `Úspěšně přidáno ${amount} zlaťáků hrdinovi!` });
+      setNotification({ type: 'success', text: `Úspěšně ${actionText} zlaťáků hrdinovi!` });
       setTimeout(() => setNotification(null), 4000);
 
     } catch (err) {
-      alert('Chyba při přičítání zlaťáků: ' + err.message);
+      alert('Chyba při úpravě zlaťáků: ' + err.message);
+    }
+  };
+
+  const handleAddExp = async (userId, e) => {
+    e.preventDefault();
+    const playerForm = expFormData[userId] || {};
+    const rawAmount = parseInt(playerForm.amount, 10);
+    const mode = playerForm.mode || 'add'; // 'add' nebo 'remove'
+    const reason = playerForm.reason || '';
+
+    if (!rawAmount || rawAmount <= 0 || !reason.trim()) {
+      alert('Zadejte platné množství zkušeností a důvod.');
+      return;
+    }
+
+    // Pokud je režim odebrání, uděláme z hodnoty záporné číslo
+    const amount = mode === 'remove' ? -rawAmount : rawAmount;
+
+    try {
+      const player = players.find(p => p.id === userId);
+      if (!player) return;
+
+      const currentExp = player.exp || 0;
+      const newExp = Math.max(0, currentExp + amount); // XP nesmí spadnout pod 0
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ exp: newExp })
+        .eq('id', userId);
+
+      if (updateError) throw updateError;
+
+      const { error: historyError } = await supabase
+        .from('exp_history')
+        .insert([{ user_id: userId, change: amount, reason: reason }]);
+
+      if (historyError) {
+        throw historyError;
+      }
+
+      setPlayers(prev => prev.map(p => p.id === userId ? { ...p, exp: newExp } : p));
+      setExpFormData(prev => ({ ...prev, [userId]: { amount: '', reason: '', mode: 'add' } }));
+
+      const actionText = mode === 'remove' ? `odebráno ${rawAmount}` : `přidáno ${rawAmount}`;
+      setNotification({ type: 'success', text: `Úspěšně ${actionText} XP hrdinovi!` });
+      setTimeout(() => setNotification(null), 4000);
+
+    } catch (err) {
+      alert('Chyba při úpravě zkušeností: ' + err.message);
     }
   };
 
@@ -636,7 +704,13 @@ export default function AdminDashboard({ userProfile, onLogout }) {
           onClick={() => setActiveTab('players')} 
           style={{ ...styles.tabButton, ...(activeTab === 'players' ? styles.activeTab : {}) }}
         >
-          👥 Hrdinové
+          👥 Hrdinové (Zlaťáky)
+        </button>
+        <button 
+          onClick={() => setActiveTab('experience')} 
+          style={{ ...styles.tabButton, ...(activeTab === 'experience' ? styles.activeTab : {}) }}
+        >
+          ⭐ Zkušenosti (XP)
         </button>
         <button 
           onClick={() => setActiveTab('recipes')} 
@@ -650,7 +724,26 @@ export default function AdminDashboard({ userProfile, onLogout }) {
         >
           🛡️ Správa receptů
         </button>
+        <button 
+         onClick={() => setActiveTab('inventory')} 
+         style={{ ...styles.tabButton, ...(activeTab === 'inventory' ? styles.activeTab : {}) }}
+        >
+          🎒 Správa inventáře
+        </button>
+        <button 
+  onClick={() => setActiveTab('quests')} 
+  style={{ ...styles.tabButton, ...(activeTab === 'quests' ? styles.activeTab : {}) }}
+>
+  📜 Úkoly říše
+</button>
+        <button 
+  onClick={() => setActiveTab('messages')} 
+  style={{ ...styles.tabButton, ...(activeTab === 'messages' ? styles.activeTab : {}) }}
+>
+  ✉️ Pošta a tresty
+</button>
       </div>
+
 
       {notification && (
         <div style={styles.alertSuccess}>
@@ -660,7 +753,7 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       {activeTab === 'players' && (
         <div style={styles.tableCard}>
-          <h2 style={styles.sectionTitle}>Seznam hrdinů v říši</h2>
+          <h2 style={styles.sectionTitle}>Seznam hrdinů v říši (Správa zlaťáků)</h2>
           
           <div style={{ overflowX: 'auto' }}>
             <table style={styles.table}>
@@ -686,26 +779,144 @@ export default function AdminDashboard({ userProfile, onLogout }) {
                         <td style={styles.td}><strong>{player.nickname}</strong></td>
                         <td style={styles.td}>{player.gold ?? 0} 🪙</td>
                         <td style={styles.td}>
-                          <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
+  <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
+    <select
+      value={playerForm.mode || 'add'}
+      onChange={(e) => handleChange(player.id, 'mode', e.target.value)}
+      style={{
+        padding: '6px',
+        borderRadius: '4px',
+        border: '1px solid #8c6239',
+        background: playerForm.mode === 'remove' ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
+        color: playerForm.mode === 'remove' ? '#fca5a5' : '#86efac',
+        fontFamily: 'Palatino Linotype',
+        fontWeight: 'bold'
+      }}
+    >
+      <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
+      <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
+    </select>
+
+    <input
+      type="number"
+      placeholder="Počet"
+      min="1"
+      value={playerForm.amount ?? ''}
+      onChange={(e) => handleChange(player.id, 'amount', e.target.value)}
+      style={styles.inputNumber}
+      required
+    />
+    <input
+      type="text"
+      placeholder="Důvod (např. Pokuta / Výhra v turnaji)"
+      value={playerForm.message ?? ''}
+      onChange={(e) => handleChange(player.id, 'message', e.target.value)}
+      style={styles.inputText}
+      required
+    />
+    <button 
+      type="submit" 
+      style={{ 
+        ...styles.actionButton, 
+        background: playerForm.mode === 'remove' 
+          ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
+          : 'linear-gradient(to bottom, #15803d, #166534)', 
+        borderColor: playerForm.mode === 'remove' ? '#450a0a' : '#14532d' 
+      }}
+    >
+      {playerForm.mode === 'remove' ? 'Odebrat' : 'Přidat'}
+    </button>
+  </form>
+</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      
+{activeTab === 'messages' && <AdminDashboardMessages userProfile={userProfile} />}
+
+{activeTab === 'quests' && <AdminDashboardQuests />}
+
+      {activeTab === 'experience' && (
+        <div style={styles.tableCard}>
+          <h2 style={styles.sectionTitle}>⭐ Správa zkušeností hrdinů (XP)</h2>
+          
+          <div style={{ overflowX: 'auto' }}>
+            <table style={styles.table}>
+              <thead>
+                <tr style={styles.tableHeaderRow}>
+                  <th style={styles.th}>Hrdina</th>
+                  <th style={styles.th}>Aktuální XP</th>
+                  <th style={styles.th}>Upravit XP & Důvod</th>
+                </tr>
+              </thead>
+              <tbody>
+                {players.length === 0 ? (
+                  <tr>
+                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>
+                      V říši zatím nejsou žádní registrovaní hrdinové.
+                    </td>
+                  </tr>
+                ) : (
+                  players.map(player => {
+                    const expForm = expFormData[player.id] || { amount: '', reason: '', mode: 'add' };
+                    const isRemove = expForm.mode === 'remove';
+                    return (
+                      <tr key={player.id} style={styles.tableRow}>
+                        <td style={styles.td}><strong>{player.nickname}</strong></td>
+                        <td style={styles.td}>{player.exp ?? 0} XP</td>
+                        <td style={styles.td}>
+                          <form onSubmit={(e) => handleAddExp(player.id, e)} style={styles.inlineForm}>
+                            <select
+                              value={expForm.mode || 'add'}
+                              onChange={(e) => handleExpChange(player.id, 'mode', e.target.value)}
+                              style={{
+                                padding: '6px',
+                                borderRadius: '4px',
+                                border: '1px solid #8c6239',
+                                background: isRemove ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
+                                color: isRemove ? '#fca5a5' : '#86efac',
+                                fontFamily: 'Palatino Linotype',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
+                              <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
+                            </select>
+
                             <input
                               type="number"
-                              placeholder="Počet"
+                              placeholder="XP"
                               min="1"
-                              value={playerForm.amount ?? ''}
-                              onChange={(e) => handleChange(player.id, 'amount', e.target.value)}
+                              value={expForm.amount ?? ''}
+                              onChange={(e) => handleExpChange(player.id, 'amount', e.target.value)}
                               style={styles.inputNumber}
                               required
                             />
                             <input
                               type="text"
-                              placeholder="Důvod (např. Za účast na eventu)"
-                              value={playerForm.message ?? ''}
-                              onChange={(e) => handleChange(player.id, 'message', e.target.value)}
+                              placeholder="Důvod (např. Trest / Překlep / Výprava)"
+                              value={expForm.reason ?? ''}
+                              onChange={(e) => handleExpChange(player.id, 'reason', e.target.value)}
                               style={styles.inputText}
                               required
                             />
-                            <button type="submit" style={styles.actionButton}>
-                              Přidat
+                            <button 
+                              type="submit" 
+                              style={{ 
+                                ...styles.actionButton, 
+                                background: isRemove 
+                                  ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
+                                  : 'linear-gradient(to bottom, #ca8a04, #a16207)', 
+                                borderColor: isRemove ? '#450a0a' : '#854d0e' 
+                              }}
+                            >
+                              {isRemove ? 'Odebrat' : 'Přidat XP'}
                             </button>
                           </form>
                         </td>
@@ -721,6 +932,8 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       {activeTab === 'recipes' && <AdminRecipesTab />}
 
+      {activeTab === 'inventory' && <AdminDashboardInventory />}
+      
       {activeTab === 'management' && (
         <AdminRecipeManagementTab 
           profiles={mgmtProfiles}
@@ -767,7 +980,8 @@ const styles = {
     display: 'flex',
     gap: '10px',
     maxWidth: '1000px',
-    margin: '0 auto 20px auto'
+    margin: '0 auto 20px auto',
+    flexWrap: 'wrap'
   },
   tabButton: {
     flex: 1,
@@ -780,11 +994,15 @@ const styles = {
     fontSize: '15px',
     fontWeight: 'bold',
     fontFamily: 'Palatino Linotype',
-    transition: 'all 0.2s'
+    transition: 'all 0.2s',
+    minWidth: '140px'
   },
   activeTab: {
     background: 'rgba(140, 98, 57, 0.9)',
     color: '#fbbf24',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#8c6239',
     borderBottom: '3px solid #fbbf24'
   },
   adminTitle: {
