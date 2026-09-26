@@ -46,6 +46,11 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
   const [inventory, setInventory] = useState(Array(20).fill(null));
   const [overflowItems, setOverflowItems] = useState([]);
 
+  // Stavy pro žebříček z výstroje a centimů
+  const [showRankingModal, setShowRankingModal] = useState(false);
+  const [rankingData, setRankingData] = useState([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+
   // Stavy pro kontrolu nepřečtených úkolů (pro notifikaci na tlačítku)
   const [hasUnreadQuests, setHasUnreadQuests] = useState(false);
 
@@ -109,12 +114,57 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     checkUnreadQuests();
   }, [userProfile?.id]);
 
+  // Funkce pro načtení a sestavení žebříčku podle výstroje a centimů
+  const handleOpenRanking = async () => {
+    setShowRankingModal(true);
+    setRankingLoading(true);
+
+    try {
+      // 1. Získáme všechny běžné hráče (ne adminy)
+      const { data: profs, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, nickname')
+        .or('is_admin.is.null,is_admin.eq.false');
+
+      if (profErr) throw profErr;
+
+      // 2. Získáme záznamy docházky pro součet bodů výstroje a centimů
+      const { data: recs, error: recErr } = await supabase
+        .from('attendance_records')
+        .select('user_id, gear_points, centimes');
+
+      if (recErr) throw recErr;
+
+      // 3. Spočítáme celkové body pro každého hráče
+      const scoresMap = {};
+      (profs || []).forEach(p => {
+        scoresMap[p.id] = { nickname: p.nickname, totalPoints: 0 };
+      });
+
+      (recs || []).forEach(r => {
+        if (scoresMap[r.user_id]) {
+          const gear = Number(r.gear_points) || 0;
+          const centimes = Number(r.centimes) || 0;
+          scoresMap[r.user_id].totalPoints += (gear + centimes);
+        }
+      });
+
+      // 4. Převedeme na pole a seřadíme sestupně (od největšího po nejmenší)
+      const rankingArray = Object.values(scoresMap).sort((a, b) => b.totalPoints - a.totalPoints);
+      setRankingData(rankingArray);
+
+    } catch (err) {
+      console.error('Chyba při načítání žebříčku:', err.message);
+    } finally {
+      setRankingLoading(false);
+    }
+  };
+
   // Kontrola, zda existují aktivní úkoly, které hráč ještě nečetl nebo nesplnil
   const checkUnreadQuests = async () => {
     if (!userProfile?.id) return;
     const nowISO = new Date().toISOString();
     
-    // 1. Získáme aktivní úkoly
     const { data: questsData } = await supabase
       .from('quests')
       .select('id')
@@ -125,7 +175,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       return;
     }
 
-    // 2. Získáme stav splnění/přečtení pro hráče
     const { data: playerQuestsData } = await supabase
       .from('player_quests')
       .select('quest_id, read_at, completed')
@@ -136,7 +185,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       pqMap[pq.quest_id] = pq;
     });
 
-    // Hledáme, jestli je nějaký aktivní úkol, který hráč vůbec nečetl (nemá read_at) nebo nemá splněno
     const unreadExists = questsData.some(q => {
       const pq = pqMap[q.id];
       return !pq || !pq.read_at || !pq.completed;
@@ -290,7 +338,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           onClick={() => { 
             setActiveTab(tabName); 
             setMobileMenuOpen(false); 
-            if (tabName === 'ukoly') setHasUnreadQuests(false); // po kliknutí můžeme badge schovat nebo nechat
+            if (tabName === 'ukoly') setHasUnreadQuests(false); 
           }}
         >
           {label}
@@ -317,6 +365,8 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         <div style={styles.topLeftGroup}>
           <PlayerDashboardMessages session={userProfile} supabase={supabase} />
           
+          <button style={styles.iconButtonPlain} onClick={handleOpenRanking} title="Žebříček říše">🏆</button>
+
           <div style={{ position: 'relative', display: 'inline-block' }}>
             <button style={styles.iconButtonPlain} onClick={handleOpenExpHistory} title="Historie zkušeností">📖</button>
             {hasUnreadExpHistory && <span style={styles.notificationBadge}>!</span>}
@@ -335,6 +385,63 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       <div className="mobile-name-wrapper">
         <span style={styles.nameValueMobile}>{playerTitle}</span>
       </div>
+
+      {/* HERNÍ MODÁLNÍ OKNO PRO ŽEBŘÍČEK (VÝSTROJ + CENTIMY) */}
+      {showRankingModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalRankingCard}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '2px solid #8c6239', paddingBottom: '8px' }}>
+              <h3 style={{ color: '#fbbf24', margin: 0, fontSize: '20px' }}>🏆 Žebříček říše (Výstroj & Centimy)</h3>
+              <button onClick={() => setShowRankingModal(false)} style={styles.closeBtn}>✕</button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#d1c7bd', marginBottom: '15px' }}>
+              Udatní hrdinové seřazení podle celkového součtu bodů za výstroj a centimy:
+            </p>
+
+            {rankingLoading ? (
+              <p style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Sčítám body z výprav a schůzek...</p>
+            ) : (
+              <div style={{ maxHeight: '350px', overflowY: 'auto', border: '1px solid #8c6239', borderRadius: '6px', background: 'rgba(20, 10, 5, 0.9)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(50, 30, 15, 0.95)', color: '#fbbf24', position: 'sticky', top: 0 }}>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', width: '50px', textAlign: 'center' }}>#</th>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239' }}>Hrdina</th>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', textAlign: 'right' }}>Body do žebříčku</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rankingData.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>Zatím žádné záznamy v žebříčku.</td>
+                      </tr>
+                    ) : (
+                      rankingData.map((player, index) => {
+                        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                        return (
+                          <tr key={index} style={{ borderBottom: '1px solid rgba(140, 98, 57, 0.2)' }}>
+                            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#fbbf24' }}>{medal}</td>
+                            <td style={{ padding: '10px', color: '#fff', fontWeight: 'bold' }}>🛡️ {player.nickname}</td>
+                            <td style={{ padding: '10px', textAlign: 'right', color: '#4ade80', fontWeight: 'bold' }}>+{player.totalPoints} bodů</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <button 
+              onClick={() => setShowRankingModal(false)} 
+              style={{ ...styles.actionButton, width: '100%', textAlign: 'center', marginTop: '20px', padding: '10px' }}
+            >
+              Zavřít svitek 📜
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={styles.mainContent}>
         <div className="mobile-menu-toggle-container">
@@ -689,6 +796,8 @@ const styles = {
   placeholderTabContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px', background: 'rgba(30, 15, 5, 0.9)', border: '2px solid #b45309', borderRadius: '10px', width: '100%', boxSizing: 'border-box', marginTop: '10px' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
+  modalRankingCard: { background: '#2c1810', border: '2px solid #8c6239', borderRadius: '8px', padding: '22px', width: '420px', boxShadow: '0 10px 30px rgba(0,0,0,0.9)', fontFamily: 'Palatino Linotype', color: '#f3e5ab' },
+  closeBtn: { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' },
   modalCloseX: { position: 'absolute', top: '10px', right: '12px', background: 'transparent', color: '#fbbf24', border: 'none', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' },
   modalTitle: { color: '#fbbf24', fontSize: '18px', margin: '0 0 15px 0', fontFamily: 'Palatino Linotype', fontWeight: 'bold' },
   settingsInput: { padding: '8px 10px', borderRadius: '4px', border: '1px solid #8c6239', background: 'rgba(255, 253, 240, 0.9)', color: '#2c1810', fontSize: '14px', fontFamily: 'Palatino Linotype', width: '100%', boxSizing: 'border-box', outline: 'none' },
@@ -696,5 +805,6 @@ const styles = {
   historyItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(50, 25, 10, 0.8)', padding: '8px 10px', borderRadius: '4px', fontSize: '12px', fontFamily: 'Palatino Linotype', border: '1px solid #78350f' },
   historyReason: {color: '#ffffff', flex: 1, margin: '0 10px', wordBreak: 'break-word' },
   historyDate: { color: '#d1d5db', fontSize: '10px', whiteSpace: 'nowrap' },
+  actionButton: { padding: '7px 15px', background: 'linear-gradient(to bottom, #15803d, #166534)', color: '#dcfce7', border: '1px solid #14532d', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontFamily: 'Palatino Linotype', whiteSpace: 'nowrap' },
   closeModalBtn: { background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#ffffff', border: '1px solid #fbbf24', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', fontSize: '14px', width: '100%' }
 };

@@ -4,6 +4,7 @@ import AdminDashboardInventory from './AdminDashboardInventory';
 import AdminDashboardMessages from './AdminDashboardMessages';
 import AdminDashboardQuests from './AdminDashboardQuests';
 import PlayerDashboardQuests from './PlayerDashboardQuests';
+import AdminDashboardAttendance from './AdminDashboardAttendance'; // <-- IMPORT NOVÉHO MODULU DOCHÁZKY
 
 // --- ZÁLOŽKA 1: RECEPTY (Vkládání, Úprava, Mazání a Seznam) ---
 function AdminRecipesTab() {
@@ -85,7 +86,6 @@ function AdminRecipesTab() {
         }).eq('id', editingId);
 
         if (error) throw error;
-        alert('Recept byl úspěšně upraven!');
       } else {
         const { error } = await supabase.from('recipes').insert([
           {
@@ -102,7 +102,6 @@ function AdminRecipesTab() {
         ]);
 
         if (error) throw error;
-        alert('Recept byl úspěšně přidán!');
       }
 
       setFormData({
@@ -113,7 +112,7 @@ function AdminRecipesTab() {
       setEditingId(null);
       fetchRecipes();
     } catch (err) {
-      alert('Chyba při ukládání receptu: ' + err.message);
+      console.error('Chyba při ukládání receptu:', err.message);
     } finally {
       setLoading(false);
     }
@@ -137,13 +136,8 @@ function AdminRecipesTab() {
 
   const handleDeleteClick = async (id, e) => {
     e.stopPropagation();
-    if (!window.confirm('Opravdu chceš tento recept natrvalo smazat?')) return;
-
     const { error } = await supabase.from('recipes').delete().eq('id', id);
-    if (error) {
-      alert('Chyba při mazání: ' + error.message);
-    } else {
-      alert('Recept byl smazán.');
+    if (!error) {
       fetchRecipes();
       if (selectedRecipe?.id === id) setSelectedRecipe(null);
     }
@@ -500,6 +494,11 @@ export default function AdminDashboard({ userProfile, onLogout }) {
   const [notification, setNotification] = useState(null);
   const [activeTab, setActiveTab] = useState('players'); 
 
+  // Stavy pro žebříček z výstroje a centimů
+  const [showRankingModal, setShowRankingModal] = useState(false);
+  const [rankingData, setRankingData] = useState([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+
   // Stavy pro správu receptů
   const [mgmtProfiles, setMgmtProfiles] = useState([]);
   const [mgmtRecipes, setMgmtRecipes] = useState([]);
@@ -568,6 +567,52 @@ export default function AdminDashboard({ userProfile, onLogout }) {
     fetchManagementData(true);
   }, []);
 
+  // Načtení a sečtení bodů za výstroj a centimy pro žebříček
+  const handleOpenRanking = async () => {
+    setShowRankingModal(true);
+    setRankingLoading(true);
+
+    try {
+      // 1. Získáme všechny běžné hráče (ne adminy)
+      const { data: profs, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, nickname')
+        .or('is_admin.is.null,is_admin.eq.false');
+
+      if (profErr) throw profErr;
+
+      // 2. Získáme všechny záznamy docházky pro součet bodů výstroje a centimů
+      const { data: recs, error: recErr } = await supabase
+        .from('attendance_records')
+        .select('user_id, gear_points, centimes');
+
+      if (recErr) throw recErr;
+
+      // 3. Spočítáme body pro každého hráče zvlášť
+      const scoresMap = {};
+      profs.forEach(p => {
+        scoresMap[p.id] = { nickname: p.nickname, totalPoints: 0 };
+      });
+
+      recs.forEach(r => {
+        if (scoresMap[r.user_id]) {
+          const gear = Number(r.gear_points) || 0;
+          const centimes = Number(r.centimes) || 0;
+          scoresMap[r.user_id].totalPoints += (gear + centimes);
+        }
+      });
+
+      // 4. Převedeme na pole a seřadíme sestupně (od největšího po nejmenší)
+      const rankingArray = Object.values(scoresMap).sort((a, b) => b.totalPoints - a.totalPoints);
+      setRankingData(rankingArray);
+
+    } catch (err) {
+      console.error('Chyba při sestavování žebříčku:', err.message);
+    } finally {
+      setRankingLoading(false);
+    }
+  };
+
   const handleChange = (userId, field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -586,15 +631,11 @@ export default function AdminDashboard({ userProfile, onLogout }) {
     e.preventDefault();
     const playerForm = formData[userId] || {};
     const rawAmount = parseInt(playerForm.amount, 10);
-    const mode = playerForm.mode || 'add'; // 'add' nebo 'remove'
+    const mode = playerForm.mode || 'add'; 
     const message = playerForm.message || '';
 
-    if (!rawAmount || rawAmount <= 0 || !message.trim()) {
-      alert('Zadejte platné množství zlaťáků a důvod.');
-      return;
-    }
+    if (!rawAmount || rawAmount <= 0 || !message.trim()) return;
 
-    // Pokud je zvoleno odebrání, hodnota bude záporná
     const amount = mode === 'remove' ? -rawAmount : rawAmount;
 
     try {
@@ -602,9 +643,8 @@ export default function AdminDashboard({ userProfile, onLogout }) {
       if (!player) return;
 
       const currentGold = player.gold || 0;
-      const newGold = Math.max(0, currentGold + amount); // Zlato nesmí klesnout pod 0
+      const newGold = Math.max(0, currentGold + amount);
 
-      // 1. Aktualizace zlaťáků v tabulce profiles
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ gold: newGold })
@@ -612,7 +652,6 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       if (updateError) throw updateError;
 
-      // 2. Odeslání oznámení hráči do tabulky notifications
       const actionText = mode === 'remove' ? `odebráno ${rawAmount}` : `přidáno ${rawAmount}`;
       const notificationText = `Administrátor ti ${actionText} zlaťáků. Důvod: ${message.trim()}`;
 
@@ -620,7 +659,6 @@ export default function AdminDashboard({ userProfile, onLogout }) {
         .from('notifications')
         .insert([{ user_id: userId, amount: amount, message: notificationText, is_read: false }]);
 
-      // 3. Aktualizace stavu v komponentě
       setPlayers(prev => prev.map(p => p.id === userId ? { ...p, gold: newGold } : p));
       setFormData(prev => ({ ...prev, [userId]: { amount: '', message: '', mode: 'add' } }));
 
@@ -628,7 +666,7 @@ export default function AdminDashboard({ userProfile, onLogout }) {
       setTimeout(() => setNotification(null), 4000);
 
     } catch (err) {
-      alert('Chyba při úpravě zlaťáků: ' + err.message);
+      console.error('Chyba při úpravě zlaťáků:', err.message);
     }
   };
 
@@ -636,15 +674,11 @@ export default function AdminDashboard({ userProfile, onLogout }) {
     e.preventDefault();
     const playerForm = expFormData[userId] || {};
     const rawAmount = parseInt(playerForm.amount, 10);
-    const mode = playerForm.mode || 'add'; // 'add' nebo 'remove'
+    const mode = playerForm.mode || 'add';
     const reason = playerForm.reason || '';
 
-    if (!rawAmount || rawAmount <= 0 || !reason.trim()) {
-      alert('Zadejte platné množství zkušeností a důvod.');
-      return;
-    }
+    if (!rawAmount || rawAmount <= 0 || !reason.trim()) return;
 
-    // Pokud je režim odebrání, uděláme z hodnoty záporné číslo
     const amount = mode === 'remove' ? -rawAmount : rawAmount;
 
     try {
@@ -652,7 +686,7 @@ export default function AdminDashboard({ userProfile, onLogout }) {
       if (!player) return;
 
       const currentExp = player.exp || 0;
-      const newExp = Math.max(0, currentExp + amount); // XP nesmí spadnout pod 0
+      const newExp = Math.max(0, currentExp + amount);
 
       const { error: updateError } = await supabase
         .from('profiles')
@@ -661,13 +695,9 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       if (updateError) throw updateError;
 
-      const { error: historyError } = await supabase
+      await supabase
         .from('exp_history')
         .insert([{ user_id: userId, change: amount, reason: reason }]);
-
-      if (historyError) {
-        throw historyError;
-      }
 
       setPlayers(prev => prev.map(p => p.id === userId ? { ...p, exp: newExp } : p));
       setExpFormData(prev => ({ ...prev, [userId]: { amount: '', reason: '', mode: 'add' } }));
@@ -677,7 +707,7 @@ export default function AdminDashboard({ userProfile, onLogout }) {
       setTimeout(() => setNotification(null), 4000);
 
     } catch (err) {
-      alert('Chyba při úpravě zkušeností: ' + err.message);
+      console.error('Chyba při úpravě zkušeností:', err.message);
     }
   };
 
@@ -696,7 +726,16 @@ export default function AdminDashboard({ userProfile, onLogout }) {
           <h1 style={styles.adminTitle}>🛡️ Síň vládce světa</h1>
           <p style={styles.welcomeText}>Vítej, mocný vládče <strong>{userProfile?.nickname}</strong>!</p>
         </div>
-        <button onClick={onLogout} style={styles.logoutButton}>Odhlásit se</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button 
+            onClick={handleOpenRanking} 
+            style={styles.iconButton}
+            title="Žebříček říše"
+          >
+            🏆
+          </button>
+          <button onClick={onLogout} style={styles.logoutButton}>Odhlásit se</button>
+        </div>
       </div>
 
       <div style={styles.navTabs}>
@@ -713,6 +752,12 @@ export default function AdminDashboard({ userProfile, onLogout }) {
           ⭐ Zkušenosti (XP)
         </button>
         <button 
+          onClick={() => setActiveTab('attendance')} 
+          style={{ ...styles.tabButton, ...(activeTab === 'attendance' ? styles.activeTab : {}) }}
+        >
+          ⚔️ Docházka
+        </button>
+        <button 
           onClick={() => setActiveTab('recipes')} 
           style={{ ...styles.tabButton, ...(activeTab === 'recipes' ? styles.activeTab : {}) }}
         >
@@ -725,29 +770,85 @@ export default function AdminDashboard({ userProfile, onLogout }) {
           🛡️ Správa receptů
         </button>
         <button 
-         onClick={() => setActiveTab('inventory')} 
-         style={{ ...styles.tabButton, ...(activeTab === 'inventory' ? styles.activeTab : {}) }}
+          onClick={() => setActiveTab('inventory')} 
+          style={{ ...styles.tabButton, ...(activeTab === 'inventory' ? styles.activeTab : {}) }}
         >
           🎒 Správa inventáře
         </button>
         <button 
-  onClick={() => setActiveTab('quests')} 
-  style={{ ...styles.tabButton, ...(activeTab === 'quests' ? styles.activeTab : {}) }}
->
-  📜 Úkoly říše
-</button>
+          onClick={() => setActiveTab('quests')} 
+          style={{ ...styles.tabButton, ...(activeTab === 'quests' ? styles.activeTab : {}) }}
+        >
+          📜 Úkoly říše
+        </button>
         <button 
-  onClick={() => setActiveTab('messages')} 
-  style={{ ...styles.tabButton, ...(activeTab === 'messages' ? styles.activeTab : {}) }}
->
-  ✉️ Pošta a tresty
-</button>
+          onClick={() => setActiveTab('messages')} 
+          style={{ ...styles.tabButton, ...(activeTab === 'messages' ? styles.activeTab : {}) }}
+        >
+          ✉️ Pošta a tresty
+        </button>
       </div>
-
 
       {notification && (
         <div style={styles.alertSuccess}>
           {notification.text}
+        </div>
+      )}
+
+      {/* HERNÍ MODÁLNÍ OKNO PRO ŽEBŘÍČEK (VÝSTROJ + CENTIMY) */}
+      {showRankingModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalRankingCard}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '2px solid #8c6239', paddingBottom: '8px' }}>
+              <h3 style={{ color: '#fbbf24', margin: 0, fontSize: '20px' }}>🏆 Žebříček říše (Výstroj & Centimy)</h3>
+              <button onClick={() => setShowRankingModal(false)} style={styles.closeBtn}>✕</button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#d1c7bd', marginBottom: '15px' }}>
+              Udatní hrdinové seřazení podle celkového součtu bodů za výstroj a centimy:
+            </p>
+
+            {rankingLoading ? (
+              <p style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Sčítám body z výprav a schůzek...</p>
+            ) : (
+              <div style={{ maxHeight: '350px', overflowY: 'auto', border: '1px solid #8c6239', borderRadius: '6px', background: 'rgba(20, 10, 5, 0.9)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(50, 30, 15, 0.95)', color: '#fbbf24', position: 'sticky', top: 0 }}>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', width: '50px', textAlign: 'center' }}>#</th>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239' }}>Hrdina</th>
+                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', textAlign: 'right' }}>Body do žebříčku</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rankingData.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>Zatím žádné záznamy v žebříčku.</td>
+                      </tr>
+                    ) : (
+                      rankingData.map((player, index) => {
+                        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                        return (
+                          <tr key={index} style={{ borderBottom: '1px solid rgba(140, 98, 57, 0.2)' }}>
+                            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#fbbf24' }}>{medal}</td>
+                            <td style={{ padding: '10px', color: '#fff', fontWeight: 'bold' }}>🛡️ {player.nickname}</td>
+                            <td style={{ padding: '10px', textAlign: 'right', color: '#4ade80', fontWeight: 'bold' }}>+{player.totalPoints} bodů</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <button 
+              onClick={() => setShowRankingModal(false)} 
+              style={{ ...styles.actionButton, width: '100%', textAlign: 'center', marginTop: '20px', padding: '10px' }}
+            >
+              Zavřít svitek 📜
+            </button>
+          </div>
         </div>
       )}
 
@@ -779,55 +880,55 @@ export default function AdminDashboard({ userProfile, onLogout }) {
                         <td style={styles.td}><strong>{player.nickname}</strong></td>
                         <td style={styles.td}>{player.gold ?? 0} 🪙</td>
                         <td style={styles.td}>
-  <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
-    <select
-      value={playerForm.mode || 'add'}
-      onChange={(e) => handleChange(player.id, 'mode', e.target.value)}
-      style={{
-        padding: '6px',
-        borderRadius: '4px',
-        border: '1px solid #8c6239',
-        background: playerForm.mode === 'remove' ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
-        color: playerForm.mode === 'remove' ? '#fca5a5' : '#86efac',
-        fontFamily: 'Palatino Linotype',
-        fontWeight: 'bold'
-      }}
-    >
-      <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
-      <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
-    </select>
+                          <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
+                            <select
+                              value={playerForm.mode || 'add'}
+                              onChange={(e) => handleChange(player.id, 'mode', e.target.value)}
+                              style={{
+                                padding: '6px',
+                                borderRadius: '4px',
+                                border: '1px solid #8c6239',
+                                background: playerForm.mode === 'remove' ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
+                                color: playerForm.mode === 'remove' ? '#fca5a5' : '#86efac',
+                                fontFamily: 'Palatino Linotype',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
+                              <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
+                            </select>
 
-    <input
-      type="number"
-      placeholder="Počet"
-      min="1"
-      value={playerForm.amount ?? ''}
-      onChange={(e) => handleChange(player.id, 'amount', e.target.value)}
-      style={styles.inputNumber}
-      required
-    />
-    <input
-      type="text"
-      placeholder="Důvod (např. Pokuta / Výhra v turnaji)"
-      value={playerForm.message ?? ''}
-      onChange={(e) => handleChange(player.id, 'message', e.target.value)}
-      style={styles.inputText}
-      required
-    />
-    <button 
-      type="submit" 
-      style={{ 
-        ...styles.actionButton, 
-        background: playerForm.mode === 'remove' 
-          ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
-          : 'linear-gradient(to bottom, #15803d, #166534)', 
-        borderColor: playerForm.mode === 'remove' ? '#450a0a' : '#14532d' 
-      }}
-    >
-      {playerForm.mode === 'remove' ? 'Odebrat' : 'Přidat'}
-    </button>
-  </form>
-</td>
+                            <input
+                              type="number"
+                              placeholder="Počet"
+                              min="1"
+                              value={playerForm.amount ?? ''}
+                              onChange={(e) => handleChange(player.id, 'amount', e.target.value)}
+                              style={styles.inputNumber}
+                              required
+                            />
+                            <input
+                              type="text"
+                              placeholder="Důvod (např. Pokuta / Výhra v turnaji)"
+                              value={playerForm.message ?? ''}
+                              onChange={(e) => handleChange(player.id, 'message', e.target.value)}
+                              style={styles.inputText}
+                              required
+                            />
+                            <button 
+                              type="submit" 
+                              style={{ 
+                                ...styles.actionButton, 
+                                background: playerForm.mode === 'remove' 
+                                  ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
+                                  : 'linear-gradient(to bottom, #15803d, #166534)', 
+                                borderColor: playerForm.mode === 'remove' ? '#450a0a' : '#14532d' 
+                              }}
+                            >
+                              {playerForm.mode === 'remove' ? 'Odebrat' : 'Přidat'}
+                            </button>
+                          </form>
+                        </td>
                       </tr>
                     );
                   })
@@ -838,9 +939,12 @@ export default function AdminDashboard({ userProfile, onLogout }) {
         </div>
       )}
       
-{activeTab === 'messages' && <AdminDashboardMessages userProfile={userProfile} />}
+      {activeTab === 'messages' && <AdminDashboardMessages userProfile={userProfile} />}
 
-{activeTab === 'quests' && <AdminDashboardQuests />}
+      {activeTab === 'quests' && <AdminDashboardQuests />}
+
+      {/* VYKRESLENÍ NOVÉ ZÁLOŽKY DOCHÁZKY */}
+      {activeTab === 'attendance' && <AdminDashboardAttendance />}
 
       {activeTab === 'experience' && (
         <div style={styles.tableCard}>
@@ -1028,6 +1132,19 @@ const styles = {
     fontFamily: 'Palatino Linotype',
     boxShadow: '0 4px 8px rgba(0,0,0,0.4)'
   },
+  iconButton: {
+    padding: '8px 12px',
+    background: 'linear-gradient(to bottom, #d97706, #b45309)',
+    color: '#fff',
+    border: '1px solid #fbbf24',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '16px',
+    boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   alertSuccess: {
     maxWidth: '1000px',
     margin: '0 auto 20px auto',
@@ -1134,5 +1251,35 @@ const styles = {
     fontWeight: 'bold',
     fontFamily: 'Palatino Linotype',
     whiteSpace: 'nowrap'
+  },
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0, 0, 0, 0.75)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000
+  },
+  modalRankingCard: {
+    background: '#2c1810',
+    border: '2px solid #8c6239',
+    borderRadius: '8px',
+    padding: '22px',
+    width: '420px',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.9)',
+    fontFamily: 'Palatino Linotype',
+    color: '#f3e5ab'
+  },
+  closeBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '16px',
+    fontWeight: 'bold'
   }
 };
