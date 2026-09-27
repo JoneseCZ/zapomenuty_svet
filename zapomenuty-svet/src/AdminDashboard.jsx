@@ -23,7 +23,12 @@ function AdminRecipesTab() {
     where_to_learn: '',
     required_level: 1,
     xp_reward: 0,
-    lifespan: ''
+    lifespan: '',
+    equipment_slot: 'batoh',
+    max_stack: 10,
+    allowed_slots: ['inventar', 'opasek', 'pravaRuka', 'levaRuka'],
+    specialty_key: 'extraSlots',
+    specialty_value: 10
   });
 
   const fetchRecipes = async () => {
@@ -33,14 +38,43 @@ function AdminRecipesTab() {
 
   const fetchRecipeDetails = async (recipe) => {
     setSelectedRecipe(recipe);
-    const { data, error } = await supabase
+    
+    const { data: playerRecipesData, error: errPR } = await supabase
       .from('player_recipes')
-      .select('user_id, unlocked_at, used_code, profiles(nickname)')
+      .select('user_id, unlocked_at, used_code')
       .eq('recipe_id', recipe.id);
 
-    if (!error) {
-      setRecipePlayers(data || []);
+    if (errPR) {
+      console.error('Chyba při načítání player_recipes:', errPR);
+      setRecipePlayers([]);
+      return;
     }
+
+    if (!playerRecipesData || playerRecipesData.length === 0) {
+      setRecipePlayers([]);
+      return;
+    }
+
+    const userIds = playerRecipesData.map(item => item.user_id);
+
+    const { data: profilesData, error: errProf } = await supabase
+      .from('profiles')
+      .select('id, nickname')
+      .in('id', userIds);
+
+    if (errProf) {
+      console.error('Chyba při načítání profilů:', errProf);
+    }
+
+    const combinedData = playerRecipesData.map(pr => {
+      const prof = profilesData?.find(p => p.id === pr.user_id);
+      return {
+        ...pr,
+        profiles: { nickname: prof?.nickname || 'Neznámý hrdina' }
+      };
+    });
+
+    setRecipePlayers(combinedData);
   };
 
   useEffect(() => {
@@ -72,41 +106,38 @@ function AdminRecipesTab() {
         ? formData.ingredients.split(',').map(item => item.trim()).filter(Boolean)
         : formData.ingredients;
 
-      if (editingId) {
-        const { error } = await supabase.from('recipes').update({
-          title: formData.title,
-          ingredients: ingredientsArray,
-          description: formData.description,
-          requirements: formData.requirements,
-          where_to_learn: formData.where_to_learn,
-          required_level: Number(formData.required_level),
-          xp_reward: Number(formData.xp_reward),
-          lifespan: formData.lifespan,
-          image_url: imageUrl
-        }).eq('id', editingId);
+      const recipePayload = {
+        title: formData.title,
+        ingredients: ingredientsArray,
+        description: formData.description,
+        requirements: formData.requirements,
+        where_to_learn: formData.where_to_learn,
+        required_level: Number(formData.required_level),
+        xp_reward: Number(formData.xp_reward),
+        lifespan: formData.lifespan,
+        image_url: imageUrl,
+        equipment_slot: formData.equipment_slot,
+        max_stack: Number(formData.max_stack),
+        allowed_slots: formData.allowed_slots,
+        specialty: {
+          key: formData.specialty_key,
+          value: Number(formData.specialty_value)
+        }
+      };
 
+      if (editingId) {
+        const { error } = await supabase.from('recipes').update(recipePayload).eq('id', editingId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('recipes').insert([
-          {
-            title: formData.title,
-            ingredients: ingredientsArray,
-            description: formData.description,
-            requirements: formData.requirements,
-            where_to_learn: formData.where_to_learn,
-            required_level: Number(formData.required_level),
-            xp_reward: Number(formData.xp_reward),
-            lifespan: formData.lifespan,
-            image_url: imageUrl
-          }
-        ]);
-
+        const { error } = await supabase.from('recipes').insert([recipePayload]);
         if (error) throw error;
       }
 
       setFormData({
         title: '', ingredients: '', description: '', requirements: '',
-        where_to_learn: '', required_level: 1, xp_reward: 0, lifespan: ''
+        where_to_learn: '', required_level: 1, xp_reward: 0, lifespan: '',
+        equipment_slot: 'batoh', max_stack: 10, allowed_slots: ['inventar', 'opasek', 'pravaRuka', 'levaRuka'], 
+        specialty_key: 'extraSlots', specialty_value: 10
       });
       setFile(null);
       setEditingId(null);
@@ -129,7 +160,12 @@ function AdminRecipesTab() {
       where_to_learn: r.where_to_learn || '',
       required_level: r.required_level || 1,
       xp_reward: r.xp_reward || 0,
-      lifespan: r.lifespan || ''
+      lifespan: r.lifespan || '',
+      equipment_slot: r.equipment_slot || 'batoh',
+      max_stack: r.max_stack || 10,
+      allowed_slots: r.allowed_slots || ['inventar', 'opasek', 'pravaRuka', 'levaRuka'],
+      specialty_key: r.specialty?.key || 'extraSlots',
+      specialty_value: r.specialty?.value || 10
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -185,15 +221,60 @@ function AdminRecipesTab() {
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', color: '#f3e5ab' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px', color: '#f3e5ab' }}>
           <label>Potřebný Level:
             <input type="number" value={formData.required_level} onChange={e => setFormData({...formData, required_level: e.target.value})} style={styles.inputTextFull} />
           </label>
           <label>Zkušenosti (XP):
             <input type="number" value={formData.xp_reward} onChange={e => setFormData({...formData, xp_reward: e.target.value})} style={styles.inputTextFull} />
           </label>
-          <label>Životnost (volitelné):
+          <label>Max stoh (stack):
+            <input type="number" min="1" value={formData.max_stack} onChange={e => setFormData({...formData, max_stack: e.target.value})} style={styles.inputTextFull} />
+          </label>
+          <label>Životnost:
             <input type="text" placeholder="např. 24h" value={formData.lifespan} onChange={e => setFormData({...formData, lifespan: e.target.value})} style={styles.inputTextFull} />
+          </label>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', color: '#f3e5ab', marginTop: '5px' }}>
+          <label>Slot na postavu:
+            <select 
+              value={formData.equipment_slot} 
+              onChange={e => setFormData({...formData, equipment_slot: e.target.value})} 
+              style={styles.inputTextFull}
+            >
+              <option value="inventar">🎒 Pouze inventář (nelze nasadit)</option>
+              <option value="batoh">Batoh</option>
+              <option value="trup">Trup</option>
+              <option value="pravaRuka">Pravá ruka</option>
+              <option value="levaRuka">Levá ruka</option>
+              <option value="hlava">Hlava</option>
+              <option value="rukavice">Rukavice</option>
+              <option value="opasek">Opasek</option>
+              <option value="boty">Boty</option>
+              <option value="plast">Plášť</option>
+              <option value="kalhoty">Kalhoty</option>
+            </select>
+          </label>
+          
+          <label>Specialita - Klíč:
+            <input 
+              type="text" 
+              placeholder="např. extraSlots" 
+              value={formData.specialty_key} 
+              onChange={e => setFormData({...formData, specialty_key: e.target.value})} 
+              style={styles.inputTextFull} 
+            />
+          </label>
+
+          <label>Specialita - Hodnota:
+            <input 
+              type="number" 
+              placeholder="např. 10" 
+              value={formData.specialty_value} 
+              onChange={e => setFormData({...formData, specialty_value: e.target.value})} 
+              style={styles.inputTextFull} 
+            />
           </label>
         </div>
 
@@ -206,7 +287,7 @@ function AdminRecipesTab() {
             {loading ? 'Ukládám...' : (editingId ? 'Uložit změny' : 'Vložit Recept do říše')}
           </button>
           {editingId && (
-            <button type="button" onClick={() => { setEditingId(null); setFormData({title: '', ingredients: '', description: '', requirements: '', where_to_learn: '', required_level: 1, xp_reward: 0, lifespan: ''}); }} style={{ padding: '10px 20px', background: '#4b5563', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+            <button type="button" onClick={() => { setEditingId(null); setFormData({title: '', ingredients: '', description: '', requirements: '', where_to_learn: '', required_level: 1, xp_reward: 0, lifespan: '', equipment_slot: 'batoh', max_stack: 10, allowed_slots: ['inventar', 'opasek', 'pravaRuka', 'levaRuka'], specialty_key: 'extraSlots', specialty_value: 10}); }} style={{ padding: '10px 20px', background: '#4b5563', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
               Zrušit
             </button>
           )}
@@ -232,7 +313,9 @@ function AdminRecipesTab() {
           >
             <span style={{ color: '#fbbf24', fontSize: '16px', fontWeight: 'bold' }}>📜 {r.title}</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-              <span>Aktivní kód: <strong style={{ color: '#00ffcc', letterSpacing: '1px' }}>{r.redeem_code}</strong></span>
+              {r.redeem_code && (
+                <span>Aktivní kód: <strong style={{ color: '#00ffcc', letterSpacing: '1px' }}>{r.redeem_code}</strong></span>
+              )}
               <button onClick={(e) => handleEditClick(r, e)} style={{ padding: '4px 10px', background: '#d97706', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Upravit</button>
               <button onClick={(e) => handleDeleteClick(r.id, e)} style={{ padding: '4px 10px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Smazat</button>
             </div>
@@ -241,40 +324,65 @@ function AdminRecipesTab() {
       </div>
 
       {selectedRecipe && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.parchmentCard}>
-            <button onClick={() => setSelectedRecipe(null)} style={styles.closeDetailBtn}>✕</button>
+        <div style={playerRecipeStyles.modalOverlay}>
+          <div style={playerRecipeStyles.parchmentCard}>
+            <button 
+              onClick={() => setSelectedRecipe(null)}
+              style={playerRecipeStyles.closeDetailBtn}
+            >
+              ✕
+            </button>
 
-            <div style={styles.parchmentHeader}>
+            <div style={playerRecipeStyles.parchmentHeader}>
               <h2 style={{ color: '#fbbf24', margin: 0, fontSize: '22px', fontFamily: 'Palatino Linotype' }}>🌿 {selectedRecipe.title}</h2>
-              <div style={styles.levelBadge}>Potřebný LVL: {selectedRecipe.required_level}</div>
+              <div style={playerRecipeStyles.levelBadge}>
+                Potřebný LVL: {selectedRecipe.required_level}
+              </div>
             </div>
 
-            <div style={styles.parchmentBody}>
+            <div style={playerRecipeStyles.parchmentBody}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
-                  <h4 style={styles.parchmentSubtitle}>🍃 SUROVINY:</h4>
+                  <h4 style={playerRecipeStyles.parchmentSubtitle}>🍃 SUROVINY:</h4>
                   <ul style={{ margin: 0, paddingLeft: '18px', color: '#f3e5ab', fontSize: '14px' }}>
-                    {selectedRecipe.ingredients?.map((ing, idx) => (<li key={idx}>{ing}</li>))}
+                    {selectedRecipe.ingredients?.map((ing, idx) => (
+                      <li key={idx}>{ing}</li>
+                    ))}
                   </ul>
                 </div>
+
                 <div>
-                  <h4 style={styles.parchmentSubtitle}>⚗️ POPIS:</h4>
-                  <p style={{ margin: 0, color: '#d1c7bd', fontSize: '13px' }}>{selectedRecipe.description || 'Bez popisu.'}</p>
+                  <h4 style={playerRecipeStyles.parchmentSubtitle}>⚗️ POPIS:</h4>
+                  <p style={{ margin: 0, color: '#d1c7bd', fontSize: '13px', lineHeight: '1.4' }}>{selectedRecipe.description || 'Bez popisu.'}</p>
                 </div>
+
                 <div>
-                  <h4 style={styles.parchmentSubtitle}>🔥 VYŽADUJE:</h4>
+                  <h4 style={playerRecipeStyles.parchmentSubtitle}>🔥 VYŽADUJE:</h4>
                   <p style={{ margin: 0, color: '#d1c7bd', fontSize: '13px' }}>{selectedRecipe.requirements || 'Nic speciálního.'}</p>
+                </div>
+
+                <div>
+                  <h4 style={playerRecipeStyles.parchmentSubtitle}>🎒 VYBAVENÍ A SPECIALITA:</h4>
+                  <p style={{ margin: 0, color: '#d1c7bd', fontSize: '13px' }}>
+                    <strong>Slot:</strong> {selectedRecipe.equipment_slot || 'inventar'}<br/>
+                    <strong>Max Stack:</strong> {selectedRecipe.max_stack || 10}<br/>
+                    <strong>Specialita:</strong> {selectedRecipe.specialty?.key ? `${selectedRecipe.specialty.key} (+${selectedRecipe.specialty.value})` : 'Žádná'}
+                  </p>
                 </div>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
                 {selectedRecipe.image_url ? (
-                  <img src={selectedRecipe.image_url} alt={selectedRecipe.title} style={styles.recipeImage} />
+                  <img 
+                    src={selectedRecipe.image_url} 
+                    alt={selectedRecipe.title} 
+                    style={playerRecipeStyles.recipeImage} 
+                  />
                 ) : (
-                  <div style={styles.noImageBox}>Bez obrázku</div>
+                  <div style={playerRecipeStyles.noImageBox}>Bez obrázku</div>
                 )}
-                <div style={styles.parchmentFooterInfo}>
+
+                <div style={playerRecipeStyles.parchmentFooterInfo}>
                   <span style={{ fontSize: '12px', color: '#fbbf24' }}>🧪 {selectedRecipe.where_to_learn || 'Kdekoliv'}</span>
                   <span style={{ fontSize: '12px', color: '#fbbf24' }}>⭐ XP: {selectedRecipe.xp_reward}</span>
                 </div>
@@ -288,13 +396,14 @@ function AdminRecipesTab() {
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {recipePlayers.map((rp, i) => (
-                    <span key={i} style={{ background: 'rgba(60, 40, 20, 0.9)', border: '1px solid #8c6239', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', color: '#f3e5ab' }}>
-                      🛡️ {rp.profiles?.nickname || 'Hrdina'} (Kód: <strong style={{color: '#00ffcc'}}>{rp.used_code || 'Neznámý'}</strong>)
+                    <span key={i} style={{ background: 'rgba(60, 40, 20, 0.9)', border: '1px solid #8c6239', padding: '4px 10px', borderRadius: '4px', fontSize: '12px', color: '#f3e5ab' }}>
+                      🛡️ {rp.profiles?.nickname || 'Hrdina'}
                     </span>
                   ))}
                 </div>
               )}
             </div>
+
           </div>
         </div>
       )}
@@ -302,8 +411,19 @@ function AdminRecipesTab() {
   );
 }
 
+const playerRecipeStyles = {
+  modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '15px', boxSizing: 'border-box' },
+  parchmentCard: { background: 'linear-gradient(135deg, #2b2118 0%, #1a120b 100%)', border: '3px solid #8c6239', borderRadius: '10px', padding: '20px', width: '100%', maxWidth: '520px', position: 'relative', boxShadow: '0 10px 30px rgba(0,0,0,0.9)', boxSizing: 'border-box', maxHeight: '90vh', overflowY: 'auto' },
+  closeDetailBtn: { position: 'absolute', top: '12px', right: '12px', background: '#dc2626', color: '#fff', border: '1px solid #991b1b', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  parchmentHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #8c6239', paddingBottom: '12px', marginBottom: '15px', paddingRight: '30px' },
+  levelBadge: { background: 'rgba(40,25,15,0.9)', border: '1px solid #8c6239', padding: '6px 12px', borderRadius: '6px', color: '#fbbf24', fontWeight: 'bold', fontSize: '12px' },
+  parchmentBody: { display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '15px' },
+  parchmentSubtitle: { color: '#fbbf24', margin: '0 0 4px 0', fontSize: '13px' },
+  recipeImage: { width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #8c6239' },
+  noImageBox: { width: '100%', height: '120px', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', border: '1px dashed #444', fontSize: '12px', borderRadius: '6px' },
+  parchmentFooterInfo: { display: 'flex', justifyContent: 'space-between', width: '100%', background: 'rgba(0,0,0,0.4)', padding: '8px', borderRadius: '6px', border: '1px solid #553311', boxSizing: 'border-box' }
+};
 
-// --- ZÁLOŽKA 2: SPRÁVA RECEPTŮ ---
 function AdminRecipeManagementTab({ profiles, recipes, playerRecipes, codeAttempts, loading, refreshing, fetchData, viewMode, setViewMode, selectedId, setSelectedId }) {
   if (loading) return <div style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Načítání údajů...</div>;
 
@@ -484,8 +604,6 @@ function AdminRecipeManagementTab({ profiles, recipes, playerRecipes, codeAttemp
   );
 }
 
-
-// --- HLAVNÍ ADMIN DASHBOARD ---
 export default function AdminDashboard({ userProfile, onLogout }) {
   const [players, setPlayers] = useState([]);
   const [formData, setFormData] = useState({});
@@ -494,12 +612,10 @@ export default function AdminDashboard({ userProfile, onLogout }) {
   const [notification, setNotification] = useState(null);
   const [activeTab, setActiveTab] = useState('players'); 
 
-  // Stavy pro žebříček z výstroje a centimů
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [rankingData, setRankingData] = useState([]);
   const [rankingLoading, setRankingLoading] = useState(false);
 
-  // Stavy pro správu receptů
   const [mgmtProfiles, setMgmtProfiles] = useState([]);
   const [mgmtRecipes, setMgmtRecipes] = useState([]);
   const [mgmtPlayerRecipes, setMgmtPlayerRecipes] = useState([]);
@@ -567,13 +683,11 @@ export default function AdminDashboard({ userProfile, onLogout }) {
     fetchManagementData(true);
   }, []);
 
-  // Načtení a sečtení bodů za výstroj a centimy pro žebříček
   const handleOpenRanking = async () => {
     setShowRankingModal(true);
     setRankingLoading(true);
 
     try {
-      // 1. Získáme všechny běžné hráče (ne adminy)
       const { data: profs, error: profErr } = await supabase
         .from('profiles')
         .select('id, nickname')
@@ -581,14 +695,12 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 
       if (profErr) throw profErr;
 
-      // 2. Získáme všechny záznamy docházky pro součet bodů výstroje a centimů
       const { data: recs, error: recErr } = await supabase
         .from('attendance_records')
         .select('user_id, gear_points, centimes');
 
       if (recErr) throw recErr;
 
-      // 3. Spočítáme body pro každého hráče zvlášť
       const scoresMap = {};
       profs.forEach(p => {
         scoresMap[p.id] = { nickname: p.nickname, totalPoints: 0 };
@@ -602,7 +714,6 @@ export default function AdminDashboard({ userProfile, onLogout }) {
         }
       });
 
-      // 4. Převedeme na pole a seřadíme sestupně (od největšího po nejmenší)
       const rankingArray = Object.values(scoresMap).sort((a, b) => b.totalPoints - a.totalPoints);
       setRankingData(rankingArray);
 
@@ -727,127 +838,49 @@ export default function AdminDashboard({ userProfile, onLogout }) {
           <p style={styles.welcomeText}>Vítej, mocný vládče <strong>{userProfile?.nickname}</strong>!</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button 
-            onClick={handleOpenRanking} 
-            style={styles.iconButton}
-            title="Žebříček říše"
-          >
-            🏆
-          </button>
+          <button onClick={handleOpenRanking} style={styles.iconButton} title="Žebříček říše">🏆</button>
           <button onClick={onLogout} style={styles.logoutButton}>Odhlásit se</button>
         </div>
       </div>
 
       <div style={styles.navTabs}>
-        <button 
-          onClick={() => setActiveTab('players')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'players' ? styles.activeTab : {}) }}
-        >
-          👥 Hrdinové (Zlaťáky)
-        </button>
-        <button 
-          onClick={() => setActiveTab('experience')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'experience' ? styles.activeTab : {}) }}
-        >
-          ⭐ Zkušenosti (XP)
-        </button>
-        <button 
-          onClick={() => setActiveTab('attendance')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'attendance' ? styles.activeTab : {}) }}
-        >
-          ⚔️ Docházka
-        </button>
-        <button 
-          onClick={() => setActiveTab('recipes')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'recipes' ? styles.activeTab : {}) }}
-        >
-          📜 Recepty
-        </button>
-        <button 
-          onClick={() => setActiveTab('management')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'management' ? styles.activeTab : {}) }}
-        >
-          🛡️ Správa receptů
-        </button>
-        <button 
-          onClick={() => setActiveTab('inventory')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'inventory' ? styles.activeTab : {}) }}
-        >
-          🎒 Správa inventáře
-        </button>
-        <button 
-          onClick={() => setActiveTab('quests')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'quests' ? styles.activeTab : {}) }}
-        >
-          📜 Úkoly říše
-        </button>
-        <button 
-          onClick={() => setActiveTab('messages')} 
-          style={{ ...styles.tabButton, ...(activeTab === 'messages' ? styles.activeTab : {}) }}
-        >
-          ✉️ Pošta a tresty
-        </button>
+        <button onClick={() => setActiveTab('players')} style={{ ...styles.tabButton, ...(activeTab === 'players' ? styles.activeTab : {}) }}>👥 Hrdinové</button>
+        <button onClick={() => setActiveTab('experience')} style={{ ...styles.tabButton, ...(activeTab === 'experience' ? styles.activeTab : {}) }}>⭐ Zkušenosti</button>
+        <button onClick={() => setActiveTab('attendance')} style={{ ...styles.tabButton, ...(activeTab === 'attendance' ? styles.activeTab : {}) }}>⚔️ Docházka</button>
+        <button onClick={() => setActiveTab('recipes')} style={{ ...styles.tabButton, ...(activeTab === 'recipes' ? styles.activeTab : {}) }}>📜 Recepty</button>
+        <button onClick={() => setActiveTab('management')} style={{ ...styles.tabButton, ...(activeTab === 'management' ? styles.activeTab : {}) }}>🛡️ Správa receptů</button>
+        <button onClick={() => setActiveTab('inventory')} style={{ ...styles.tabButton, ...(activeTab === 'inventory' ? styles.activeTab : {}) }}>🎒 Inventář</button>
+        <button onClick={() => setActiveTab('quests')} style={{ ...styles.tabButton, ...(activeTab === 'quests' ? styles.activeTab : {}) }}>📜 Úkoly</button>
+        <button onClick={() => setActiveTab('messages')} style={{ ...styles.tabButton, ...(activeTab === 'messages' ? styles.activeTab : {}) }}>✉️ Pošta</button>
       </div>
 
-      {notification && (
-        <div style={styles.alertSuccess}>
-          {notification.text}
-        </div>
-      )}
+      {notification && <div style={styles.alertSuccess}>{notification.text}</div>}
 
-      {/* HERNÍ MODÁLNÍ OKNO PRO ŽEBŘÍČEK (VÝSTROJ + CENTIMY) */}
       {showRankingModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalRankingCard}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '2px solid #8c6239', paddingBottom: '8px' }}>
-              <h3 style={{ color: '#fbbf24', margin: 0, fontSize: '20px' }}>🏆 Žebříček říše (Výstroj & Centimy)</h3>
+              <h3 style={{ color: '#fbbf24', margin: 0, fontSize: '20px' }}>🏆 Žebříček říše</h3>
               <button onClick={() => setShowRankingModal(false)} style={styles.closeBtn}>✕</button>
             </div>
-
-            <p style={{ fontSize: '13px', color: '#d1c7bd', marginBottom: '15px' }}>
-              Udatní hrdinové seřazení podle celkového součtu bodů za výstroj a centimy:
-            </p>
-
             {rankingLoading ? (
-              <p style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Sčítám body z výprav a schůzek...</p>
+              <p style={{ color: '#fbbf24', textAlign: 'center', padding: '20px' }}>Sčítám body...</p>
             ) : (
               <div style={{ maxHeight: '350px', overflowY: 'auto', border: '1px solid #8c6239', borderRadius: '6px', background: 'rgba(20, 10, 5, 0.9)' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ background: 'rgba(50, 30, 15, 0.95)', color: '#fbbf24', position: 'sticky', top: 0 }}>
-                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', width: '50px', textAlign: 'center' }}>#</th>
-                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239' }}>Hrdina</th>
-                      <th style={{ padding: '10px', borderBottom: '2px solid #8c6239', textAlign: 'right' }}>Body do žebříčku</th>
-                    </tr>
-                  </thead>
                   <tbody>
-                    {rankingData.length === 0 ? (
-                      <tr>
-                        <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>Zatím žádné záznamy v žebříčku.</td>
+                    {rankingData.map((player, index) => (
+                      <tr key={index} style={{ borderBottom: '1px solid rgba(140, 98, 57, 0.2)' }}>
+                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#fbbf24' }}>{index + 1}.</td>
+                        <td style={{ padding: '10px', color: '#fff', fontWeight: 'bold' }}>🛡️ {player.nickname}</td>
+                        <td style={{ padding: '10px', textAlign: 'right', color: '#4ade80', fontWeight: 'bold' }}>+{player.totalPoints} bodů</td>
                       </tr>
-                    ) : (
-                      rankingData.map((player, index) => {
-                        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                        return (
-                          <tr key={index} style={{ borderBottom: '1px solid rgba(140, 98, 57, 0.2)' }}>
-                            <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#fbbf24' }}>{medal}</td>
-                            <td style={{ padding: '10px', color: '#fff', fontWeight: 'bold' }}>🛡️ {player.nickname}</td>
-                            <td style={{ padding: '10px', textAlign: 'right', color: '#4ade80', fontWeight: 'bold' }}>+{player.totalPoints} bodů</td>
-                          </tr>
-                        );
-                      })
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
             )}
-
-            <button 
-              onClick={() => setShowRankingModal(false)} 
-              style={{ ...styles.actionButton, width: '100%', textAlign: 'center', marginTop: '20px', padding: '10px' }}
-            >
-              Zavřít svitek 📜
-            </button>
+            <button onClick={() => setShowRankingModal(false)} style={{ ...styles.actionButton, width: '100%', textAlign: 'center', marginTop: '20px', padding: '10px' }}>Zavřít</button>
           </div>
         </div>
       )}
@@ -855,202 +888,80 @@ export default function AdminDashboard({ userProfile, onLogout }) {
       {activeTab === 'players' && (
         <div style={styles.tableCard}>
           <h2 style={styles.sectionTitle}>Seznam hrdinů v říši (Správa zlaťáků)</h2>
-          
-          <div style={{ overflowX: 'auto' }}>
-            <table style={styles.table}>
-              <thead>
-                <tr style={styles.tableHeaderRow}>
-                  <th style={styles.th}>Hrdina</th>
-                  <th style={styles.th}>Zlaťáky</th>
-                  <th style={styles.th}>Odměna & Zpráva od vládce</th>
-                </tr>
-              </thead>
-              <tbody>
-                {players.length === 0 ? (
-                  <tr>
-                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>
-                      V říši zatím nejsou žádní registrovaní hrdinové.
+          <table style={styles.table}>
+            <thead>
+              <tr style={styles.tableHeaderRow}>
+                <th style={styles.th}>Hrdina</th>
+                <th style={styles.th}>Zlaťáky</th>
+                <th style={styles.th}>Akce</th>
+              </tr>
+            </thead>
+            <tbody>
+              {players.map(player => {
+                const playerForm = formData[player.id] || { amount: '', message: '', mode: 'add' };
+                return (
+                  <tr key={player.id} style={styles.tableRow}>
+                    <td style={styles.td}><strong>{player.nickname}</strong></td>
+                    <td style={styles.td}>{player.gold ?? 0} 🪙</td>
+                    <td style={styles.td}>
+                      <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
+                        <select value={playerForm.mode} onChange={(e) => handleChange(player.id, 'mode', e.target.value)} style={{ padding: '6px', borderRadius: '4px' }}>
+                          <option value="add">Přidat (+)</option>
+                          <option value="remove">Odebrat (-)</option>
+                        </select>
+                        <input type="number" min="1" placeholder="Počet" value={playerForm.amount ?? ''} onChange={(e) => handleChange(player.id, 'amount', e.target.value)} style={styles.inputNumber} required />
+                        <input type="text" placeholder="Důvod" value={playerForm.message ?? ''} onChange={(e) => handleChange(player.id, 'message', e.target.value)} style={styles.inputText} required />
+                        <button type="submit" style={styles.actionButton}>Provést</button>
+                      </form>
                     </td>
                   </tr>
-                ) : (
-                  players.map(player => {
-                    const playerForm = formData[player.id] || { amount: '', message: '' };
-                    return (
-                      <tr key={player.id} style={styles.tableRow}>
-                        <td style={styles.td}><strong>{player.nickname}</strong></td>
-                        <td style={styles.td}>{player.gold ?? 0} 🪙</td>
-                        <td style={styles.td}>
-                          <form onSubmit={(e) => handleAddGold(player.id, e)} style={styles.inlineForm}>
-                            <select
-                              value={playerForm.mode || 'add'}
-                              onChange={(e) => handleChange(player.id, 'mode', e.target.value)}
-                              style={{
-                                padding: '6px',
-                                borderRadius: '4px',
-                                border: '1px solid #8c6239',
-                                background: playerForm.mode === 'remove' ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
-                                color: playerForm.mode === 'remove' ? '#fca5a5' : '#86efac',
-                                fontFamily: 'Palatino Linotype',
-                                fontWeight: 'bold'
-                              }}
-                            >
-                              <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
-                              <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
-                            </select>
-
-                            <input
-                              type="number"
-                              placeholder="Počet"
-                              min="1"
-                              value={playerForm.amount ?? ''}
-                              onChange={(e) => handleChange(player.id, 'amount', e.target.value)}
-                              style={styles.inputNumber}
-                              required
-                            />
-                            <input
-                              type="text"
-                              placeholder="Důvod (např. Pokuta / Výhra v turnaji)"
-                              value={playerForm.message ?? ''}
-                              onChange={(e) => handleChange(player.id, 'message', e.target.value)}
-                              style={styles.inputText}
-                              required
-                            />
-                            <button 
-                              type="submit" 
-                              style={{ 
-                                ...styles.actionButton, 
-                                background: playerForm.mode === 'remove' 
-                                  ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
-                                  : 'linear-gradient(to bottom, #15803d, #166534)', 
-                                borderColor: playerForm.mode === 'remove' ? '#450a0a' : '#14532d' 
-                              }}
-                            >
-                              {playerForm.mode === 'remove' ? 'Odebrat' : 'Přidat'}
-                            </button>
-                          </form>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
       
       {activeTab === 'messages' && <AdminDashboardMessages userProfile={userProfile} />}
-
       {activeTab === 'quests' && <AdminDashboardQuests />}
-
-      {/* VYKRESLENÍ NOVÉ ZÁLOŽKY DOCHÁZKY */}
       {activeTab === 'attendance' && <AdminDashboardAttendance />}
-
       {activeTab === 'experience' && (
         <div style={styles.tableCard}>
-          <h2 style={styles.sectionTitle}>⭐ Správa zkušeností hrdinů (XP)</h2>
-          
-          <div style={{ overflowX: 'auto' }}>
-            <table style={styles.table}>
-              <thead>
-                <tr style={styles.tableHeaderRow}>
-                  <th style={styles.th}>Hrdina</th>
-                  <th style={styles.th}>Aktuální XP</th>
-                  <th style={styles.th}>Upravit XP & Důvod</th>
-                </tr>
-              </thead>
-              <tbody>
-                {players.length === 0 ? (
-                  <tr>
-                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px', color: '#d1c7bd' }}>
-                      V říši zatím nejsou žádní registrovaní hrdinové.
+          <h2 style={styles.sectionTitle}>⭐ Správa zkušeností (XP)</h2>
+          <table style={styles.table}>
+            <tbody>
+              {players.map(player => {
+                const expForm = expFormData[player.id] || { amount: '', reason: '', mode: 'add' };
+                return (
+                  <tr key={player.id} style={styles.tableRow}>
+                    <td style={styles.td}><strong>{player.nickname}</strong></td>
+                    <td style={styles.td}>{player.exp ?? 0} XP</td>
+                    <td style={styles.td}>
+                      <form onSubmit={(e) => handleAddExp(player.id, e)} style={styles.inlineForm}>
+                        <select value={expForm.mode} onChange={(e) => handleExpChange(player.id, 'mode', e.target.value)} style={{ padding: '6px' }}>
+                          <option value="add">Přidat</option>
+                          <option value="remove">Odebrat</option>
+                        </select>
+                        <input type="number" min="1" placeholder="XP" value={expForm.amount ?? ''} onChange={(e) => handleExpChange(player.id, 'amount', e.target.value)} style={styles.inputNumber} required />
+                        <input type="text" placeholder="Důvod" value={expForm.reason ?? ''} onChange={(e) => handleExpChange(player.id, 'reason', e.target.value)} style={styles.inputText} required />
+                        <button type="submit" style={styles.actionButton}>XP</button>
+                      </form>
                     </td>
                   </tr>
-                ) : (
-                  players.map(player => {
-                    const expForm = expFormData[player.id] || { amount: '', reason: '', mode: 'add' };
-                    const isRemove = expForm.mode === 'remove';
-                    return (
-                      <tr key={player.id} style={styles.tableRow}>
-                        <td style={styles.td}><strong>{player.nickname}</strong></td>
-                        <td style={styles.td}>{player.exp ?? 0} XP</td>
-                        <td style={styles.td}>
-                          <form onSubmit={(e) => handleAddExp(player.id, e)} style={styles.inlineForm}>
-                            <select
-                              value={expForm.mode || 'add'}
-                              onChange={(e) => handleExpChange(player.id, 'mode', e.target.value)}
-                              style={{
-                                padding: '6px',
-                                borderRadius: '4px',
-                                border: '1px solid #8c6239',
-                                background: isRemove ? 'rgba(153, 27, 27, 0.3)' : 'rgba(20, 80, 20, 0.3)',
-                                color: isRemove ? '#fca5a5' : '#86efac',
-                                fontFamily: 'Palatino Linotype',
-                                fontWeight: 'bold'
-                              }}
-                            >
-                              <option value="add" style={{background: '#2c1810', color: '#fff'}}>Přidat (+)</option>
-                              <option value="remove" style={{background: '#2c1810', color: '#fff'}}>Odebrat (-)</option>
-                            </select>
-
-                            <input
-                              type="number"
-                              placeholder="XP"
-                              min="1"
-                              value={expForm.amount ?? ''}
-                              onChange={(e) => handleExpChange(player.id, 'amount', e.target.value)}
-                              style={styles.inputNumber}
-                              required
-                            />
-                            <input
-                              type="text"
-                              placeholder="Důvod (např. Trest / Překlep / Výprava)"
-                              value={expForm.reason ?? ''}
-                              onChange={(e) => handleExpChange(player.id, 'reason', e.target.value)}
-                              style={styles.inputText}
-                              required
-                            />
-                            <button 
-                              type="submit" 
-                              style={{ 
-                                ...styles.actionButton, 
-                                background: isRemove 
-                                  ? 'linear-gradient(to bottom, #991b1b, #7f1d1d)' 
-                                  : 'linear-gradient(to bottom, #ca8a04, #a16207)', 
-                                borderColor: isRemove ? '#450a0a' : '#854d0e' 
-                              }}
-                            >
-                              {isRemove ? 'Odebrat' : 'Přidat XP'}
-                            </button>
-                          </form>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-
       {activeTab === 'recipes' && <AdminRecipesTab />}
-
       {activeTab === 'inventory' && <AdminDashboardInventory />}
-      
       {activeTab === 'management' && (
         <AdminRecipeManagementTab 
-          profiles={mgmtProfiles}
-          recipes={mgmtRecipes}
-          playerRecipes={mgmtPlayerRecipes}
-          codeAttempts={mgmtCodeAttempts}
-          loading={mgmtLoading}
-          refreshing={mgmtRefreshing}
-          fetchData={fetchManagementData}
-          viewMode={mgmtViewMode}
-          setViewMode={setMgmtViewMode}
-          selectedId={mgmtSelectedId}
-          setSelectedId={setMgmtSelectedId}
+          profiles={mgmtProfiles} recipes={mgmtRecipes} playerRecipes={mgmtPlayerRecipes}
+          codeAttempts={mgmtCodeAttempts} loading={mgmtLoading} refreshing={mgmtRefreshing}
+          fetchData={fetchManagementData} viewMode={mgmtViewMode} setViewMode={setMgmtViewMode}
+          selectedId={mgmtSelectedId} setSelectedId={setMgmtSelectedId}
         />
       )}
     </div>
@@ -1058,228 +969,30 @@ export default function AdminDashboard({ userProfile, onLogout }) {
 }
 
 const styles = {
-  container: {
-    minHeight: '100vh',
-    backgroundImage: 'url(/pozadi_mlha.jpg)',
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    padding: '30px 20px',
-    boxSizing: 'border-box',
-    fontFamily: 'Palatino Linotype',
-    color: '#f3e5ab'
-  },
-  headerBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    maxWidth: '1000px',
-    margin: '0 auto 15px auto',
-    background: 'rgba(20, 10, 5, 0.85)',
-    padding: '15px 25px',
-    borderRadius: '8px',
-    border: '2px solid #8c6239',
-    boxShadow: '0 8px 16px rgba(0,0,0,0.6)'
-  },
-  navTabs: {
-    display: 'flex',
-    gap: '10px',
-    maxWidth: '1000px',
-    margin: '0 auto 20px auto',
-    flexWrap: 'wrap'
-  },
-  tabButton: {
-    flex: 1,
-    padding: '12px',
-    background: 'rgba(30, 20, 10, 0.7)',
-    color: '#d1c7bd',
-    border: '1px solid #8c6239',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    fontSize: '15px',
-    fontWeight: 'bold',
-    fontFamily: 'Palatino Linotype',
-    transition: 'all 0.2s',
-    minWidth: '140px'
-  },
-  activeTab: {
-    background: 'rgba(140, 98, 57, 0.9)',
-    color: '#fbbf24',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: '#8c6239',
-    borderBottom: '3px solid #fbbf24'
-  },
-  adminTitle: {
-    color: '#fbbf24',
-    fontSize: '26px',
-    margin: '0 0 5px 0',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.8)'
-  },
-  welcomeText: {
-    fontSize: '15px',
-    margin: 0,
-    color: '#d1c7bd'
-  },
-  logoutButton: {
-    padding: '8px 18px',
-    background: 'linear-gradient(to bottom, #991b1b, #7f1d1d)',
-    color: '#fee2e2',
-    border: '1px solid #450a0a',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 'bold',
-    fontFamily: 'Palatino Linotype',
-    boxShadow: '0 4px 8px rgba(0,0,0,0.4)'
-  },
-  iconButton: {
-    padding: '8px 12px',
-    background: 'linear-gradient(to bottom, #d97706, #b45309)',
-    color: '#fff',
-    border: '1px solid #fbbf24',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    boxShadow: '0 4px 8px rgba(0,0,0,0.4)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  alertSuccess: {
-    maxWidth: '1000px',
-    margin: '0 auto 20px auto',
-    padding: '12px 20px',
-    background: 'rgba(20, 80, 20, 0.9)',
-    color: '#d4edda',
-    border: '1px solid #28a745',
-    borderRadius: '6px',
-    textAlign: 'center',
-    fontWeight: 'bold'
-  },
-  tableCard: {
-    maxWidth: '1000px',
-    margin: '0 auto',
-    background: 'rgba(30, 20, 10, 0.85)',
-    padding: '25px',
-    borderRadius: '8px',
-    border: '2px solid #8c6239',
-    boxShadow: '0 10px 25px rgba(0,0,0,0.7)'
-  },
-  sectionTitle: {
-    color: '#fbbf24',
-    fontSize: '20px',
-    marginBottom: '15px',
-    borderBottom: '1px solid #8c6239',
-    paddingBottom: '8px'
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    textAlign: 'left'
-  },
-  tableHeaderRow: {
-    background: 'rgba(61, 35, 20, 0.9)',
-    borderBottom: '2px solid #8c6239'
-  },
-  th: {
-    padding: '12px 15px',
-    color: '#fbbf24',
-    fontSize: '15px',
-    fontWeight: 'bold'
-  },
-  tableRow: {
-    borderBottom: '1px solid rgba(140, 98, 57, 0.3)'
-  },
-  td: {
-    padding: '12px 15px',
-    fontSize: '14px',
-    color: '#fdfbf7',
-    verticalAlign: 'middle'
-  },
-  inlineForm: {
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'center'
-  },
-  inputNumber: {
-    width: '75px',
-    padding: '6px 8px',
-    borderRadius: '4px',
-    border: '1px solid #8c6239',
-    background: 'rgba(255, 253, 240, 0.9)',
-    color: '#2c1810',
-    fontFamily: 'Palatino Linotype',
-    textAlign: 'center'
-  },
-  inputText: {
-    flex: 1,
-    padding: '6px 10px',
-    borderRadius: '4px',
-    border: '1px solid #8c6239',
-    background: 'rgba(255, 253, 240, 0.9)',
-    color: '#2c1810',
-    fontFamily: 'Palatino Linotype'
-  },
-  inputTextFull: {
-    width: '100%',
-    padding: '8px 10px',
-    borderRadius: '4px',
-    border: '1px solid #8c6239',
-    background: 'rgba(255, 253, 240, 0.9)',
-    color: '#2c1810',
-    fontFamily: 'Palatino Linotype',
-    boxSizing: 'border-box'
-  },
-  textareaFull: {
-    width: '100%',
-    padding: '8px 10px',
-    borderRadius: '4px',
-    border: '1px solid #8c6239',
-    background: 'rgba(255, 253, 240, 0.9)',
-    color: '#2c1810',
-    fontFamily: 'Palatino Linotype',
-    boxSizing: 'border-box',
-    minHeight: '60px'
-  },
-  actionButton: {
-    padding: '7px 15px',
-    background: 'linear-gradient(to bottom, #15803d, #166534)',
-    color: '#dcfce7',
-    border: '1px solid #14532d',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontWeight: 'bold',
-    fontFamily: 'Palatino Linotype',
-    whiteSpace: 'nowrap'
-  },
-  modalOverlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'rgba(0, 0, 0, 0.75)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000
-  },
-  modalRankingCard: {
-    background: '#2c1810',
-    border: '2px solid #8c6239',
-    borderRadius: '8px',
-    padding: '22px',
-    width: '420px',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.9)',
-    fontFamily: 'Palatino Linotype',
-    color: '#f3e5ab'
-  },
-  closeBtn: {
-    background: 'transparent',
-    border: 'none',
-    color: '#fff',
-    cursor: 'pointer',
-    fontSize: '16px',
-    fontWeight: 'bold'
-  }
+  container: { minHeight: '100vh', backgroundImage: 'url(/pozadi_mlha.jpg)', backgroundSize: 'cover', padding: '30px 20px', fontFamily: 'Palatino Linotype', color: '#f3e5ab' },
+  headerBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1000px', margin: '0 auto 15px auto', background: 'rgba(20, 10, 5, 0.85)', padding: '15px 25px', borderRadius: '8px', border: '2px solid #8c6239' },
+  navTabs: { display: 'flex', gap: '10px', maxWidth: '1000px', margin: '0 auto 20px auto', flexWrap: 'wrap' },
+  tabButton: { flex: 1, padding: '12px', background: 'rgba(30, 20, 10, 0.7)', color: '#d1c7bd', border: '1px solid #8c6239', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
+  activeTab: { background: 'rgba(140, 98, 57, 0.9)', color: '#fbbf24', borderBottom: '3px solid #fbbf24' },
+  adminTitle: { color: '#fbbf24', fontSize: '26px', margin: '0 0 5px 0' },
+  welcomeText: { fontSize: '15px', margin: 0, color: '#d1c7bd' },
+  logoutButton: { padding: '8px 18px', background: '#991b1b', color: '#fee2e2', border: 'none', borderRadius: '4px', cursor: 'pointer' },
+  iconButton: { padding: '8px 12px', background: '#d97706', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' },
+  alertSuccess: { maxWidth: '1000px', margin: '0 auto 20px auto', padding: '12px', background: 'rgba(20, 80, 20, 0.9)', color: '#d4edda', borderRadius: '6px', textAlign: 'center' },
+  tableCard: { maxWidth: '1000px', margin: '0 auto', background: 'rgba(30, 20, 10, 0.85)', padding: '25px', borderRadius: '8px', border: '2px solid #8c6239' },
+  sectionTitle: { color: '#fbbf24', fontSize: '20px', marginBottom: '15px', borderBottom: '1px solid #8c6239', paddingBottom: '8px' },
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left' },
+  tableHeaderRow: { background: 'rgba(61, 35, 20, 0.9)', borderBottom: '2px solid #8c6239' },
+  th: { padding: '12px 15px', color: '#fbbf24' },
+  tableRow: { borderBottom: '1px solid rgba(140, 98, 57, 0.3)' },
+  td: { padding: '12px 15px', fontSize: '14px', color: '#fdfbf7' },
+  inlineForm: { display: 'flex', gap: '10px', alignItems: 'center' },
+  inputNumber: { width: '75px', padding: '6px', borderRadius: '4px', border: '1px solid #8c6239' },
+  inputText: { flex: 1, padding: '6px', borderRadius: '4px', border: '1px solid #8c6239' },
+  inputTextFull: { width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #8c6239', boxSizing: 'border-box' },
+  textareaFull: { width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #8c6239', boxSizing: 'border-box', minHeight: '60px' },
+  actionButton: { padding: '7px 15px', background: '#15803d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+  modalRankingCard: { background: '#2c1810', border: '2px solid #8c6239', borderRadius: '8px', padding: '22px', width: '420px', color: '#f3e5ab' },
+  closeBtn: { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px' }
 };

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
+import { supabase } from './App';
 
-export default function PlayerDashboardMap({ gold, setGold, inventory, setInventory, totalInventorySlots }) {
+export default function PlayerDashboardMap({ gold, setGold, inventory, setInventory, totalInventorySlots, userProfile }) {
   const [overflowItems, setOverflowItems] = useState([]);
   const [selectedInventoryIndex, setSelectedInventoryIndex] = useState(null);
 
@@ -9,6 +10,8 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
   const [rewardModalDrops, setRewardModalDrops] = useState(null);
   const [alertModalMessage, setAlertModalMessage] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
+
+  const [purchasedTilesThisWeek, setPurchasedTilesThisWeek] = useState(new Set());
 
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -237,11 +240,8 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     hory: 'Hory',
   };
 
-  const [mapTiles, setMapTiles] = useState(() => {
-    const savedTiles = localStorage.getItem('mapTiles_v2');
-    if (savedTiles) {
-      try { return JSON.parse(savedTiles); } catch (e) { console.error(e); }
-    }
+  // Generování statických definic políček (1 až 476)
+  const mapTiles = (() => {
     const tiles = {};
     const ranges = [
       { start: 1, end: 7, biome: 'les' }, { start: 8, end: 10, biome: 'louka' }, { start: 11, end: 15, biome: 'reka' },
@@ -281,12 +281,13 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     ];
     ranges.forEach(r => {
       for (let id = r.start; id <= r.end; id++) {
-        tiles[id] = { id, biome: r.biome, price: 1, purchasedWeeks: [] };
+        tiles[id] = { id, biome: r.biome, price: 1 };
       }
     });
     return tiles;
-  });
+  })();
 
+  // Výpočet týdenního identifikátoru (reset každé úterý ve 12:00)
   const getCurrentWeekIdentifier = () => {
     const now = new Date();
     const d = new Date(now);
@@ -298,9 +299,37 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     return d.toISOString();
   };
 
+  const currentWeekId = getCurrentWeekIdentifier();
+
+  // Načtení nákupů a inventáře ze Supabase při startu nebo změně uživatele
   useEffect(() => {
-    localStorage.setItem('mapTiles_v2', JSON.stringify(mapTiles));
-  }, [mapTiles]);
+    if (!userProfile?.id) return;
+
+    const fetchData = async () => {
+      // 1. Načtení inventáře
+      const { data: invData, error: invError } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('user_id', userProfile.id);
+
+      if (!invError && invData) {
+        setInventory(invData);
+      }
+
+      // 2. Načtení zakoupených políček pro aktuální týden z DB
+      const { data: tileData, error: tileError } = await supabase
+        .from('user_map_tiles')
+        .select('tile_id')
+        .eq('user_id', userProfile.id)
+        .eq('week_identifier', currentWeekId);
+
+      if (!tileError && tileData) {
+        setPurchasedTilesThisWeek(new Set(tileData.map(t => t.tile_id)));
+      }
+    };
+
+    fetchData();
+  }, [userProfile?.id, currentWeekId]);
 
   const cols = 28;
   const rows = 17;
@@ -350,34 +379,72 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     setPosition({ x: mouseX - (mouseX - position.x) * (newScale / scale), y: mouseY - (mouseY - position.y) * (newScale / scale) });
   };
 
-  const addItemsToInventoryOrOverflow = (cardDrops) => {
+  const addItemsToInventoryOrOverflow = async (cardDrops) => {
     let newInv = [...inventory];
     let newOverflow = [...overflowItems];
     let hasOverflowed = false;
 
-    cardDrops.forEach(drop => {
+    for (const drop of cardDrops) {
       let remaining = drop.count;
       const itemName = drop.name;
+      
+      // Zjistíme maximální stohovatelnost pro tento předmět (výchozí např. 10, pro nástroje 1)
+      // Tuto hodnotu můžeme vytáhnout z definice receptů nebo objektu předmětu
+      const maxStackLimit = drop.max_stack !== undefined ? drop.max_stack : (itemName.toLowerCase().includes('nůž') ? 1 : 10);
 
+      // 1. Doplňování existujících stohů do limitu maxStackLimit
       for (let i = 0; i < newInv.length; i++) {
-        if (newInv[i] && newInv[i].name === itemName && newInv[i].count < 10) {
-          const spaceLeft = 10 - newInv[i].count;
-          const take = Math.min(spaceLeft, remaining);
-          newInv[i] = { ...newInv[i], count: newInv[i].count + take };
-          remaining -= take;
-          if (remaining === 0) break;
+        if (remaining <= 0) break;
+        const currentItem = newInv[i];
+
+        if (currentItem && currentItem.name === itemName) {
+          const currentCount = Number(currentItem.count) || 1;
+          
+          if (currentCount < maxStackLimit) {
+            const spaceLeft = maxStackLimit - currentCount;
+            const take = Math.min(spaceLeft, remaining);
+            const newCount = currentCount + take;
+
+            if (currentItem.id) {
+              await supabase
+                .from('inventory')
+                .update({ count: newCount })
+                .eq('id', currentItem.id);
+            }
+
+            newInv[i] = { ...currentItem, count: newCount };
+            remaining -= take;
+          }
         }
       }
 
-      for (let i = 0; i < newInv.length; i++) {
-        if (remaining > 0 && !newInv[i]) {
-          const take = Math.min(10, remaining);
-          newInv[i] = { name: itemName, count: take };
+      // 2. Vytváření nových slotů, pokud maxStackLimit > 1 nebo pokud se nejedná o unikátní nástroj
+      while (remaining > 0) {
+        if (newInv.length >= totalInventorySlots) break;
+
+        const take = maxStackLimit === 1 ? 1 : Math.min(maxStackLimit, remaining);
+        const newItem = {
+          user_id: userProfile?.id,
+          name: itemName,
+          count: take,
+          max_stack: maxStackLimit,
+          equipment_slot: 'inventar'
+        };
+
+        const { data: insertedData, error } = await supabase
+          .from('inventory')
+          .insert([newItem])
+          .select();
+
+        if (!error && insertedData && insertedData[0]) {
+          newInv.push(insertedData[0]);
           remaining -= take;
-          if (remaining === 0) break;
+        } else {
+          break;
         }
       }
 
+      // 3. Přebytky
       if (remaining > 0) {
         hasOverflowed = true;
         const existing = newOverflow.find(o => o.name === itemName);
@@ -387,7 +454,7 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
           newOverflow.push({ name: itemName, count: remaining });
         }
       }
-    });
+    }
 
     setInventory(newInv);
     setOverflowItems(newOverflow);
@@ -397,54 +464,117 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     }
   };
 
-  const handleBuySubmit = (e) => {
+  const handleBuySubmit = async (e) => {
     e.preventDefault();
+
+    if (userProfile?.id) {
+      const { data: freshInv, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('user_id', userProfile.id);
+
+      if (!error && freshInv) {
+        setInventory(freshInv);
+      }
+    }
+
     if (overflowItems.length > 0) {
       setAlertModalMessage('Nemůžeš nakupovat, dokud nevyřešíš přebytečné suroviny v inventáři!');
       return;
     }
+
     const idNum = parseInt(inputTileId, 10);
     if (isNaN(idNum) || !mapTiles[idNum]) {
       setAlertModalMessage('Zadej platné číslo políčka (1–476)!');
       return;
     }
+
     const tile = mapTiles[idNum];
-    const currentWeekId = getCurrentWeekIdentifier();
-    if ((tile.purchasedWeeks || []).includes(currentWeekId)) {
+    if (purchasedTilesThisWeek.has(tile.id)) {
       setAlertModalMessage(`Políčko č. ${tile.id} již bylo tento týden zakoupeno!`);
       return;
     }
+
     setBuyConfirmModal(tile);
   };
 
-  const confirmBuyTile = () => {
+  const confirmBuyTile = async () => {
     const tile = buyConfirmModal;
     if (gold < tile.price) {
       setAlertModalMessage('Nemáš dostatek zlatých!');
       setBuyConfirmModal(null);
       return;
     }
+
+    // Uložení nákupu políčka do Supabase tabulky
+    const { error: insertError } = await supabase
+      .from('user_map_tiles')
+      .insert([{
+        user_id: userProfile.id,
+        tile_id: tile.id,
+        week_identifier: currentWeekId
+      }]);
+
+    if (insertError) {
+      setAlertModalMessage('Chyba při zápisu nákupu do databáze. Zkus to znovu.');
+      setBuyConfirmModal(null);
+      return;
+    }
+
     setGold(prev => prev - tile.price);
-    const currentWeekId = getCurrentWeekIdentifier();
-    setMapTiles(prev => ({
-      ...prev,
-      [tile.id]: { ...prev[tile.id], purchasedWeeks: [...(prev[tile.id].purchasedWeeks || []), currentWeekId] }
-    }));
+    setPurchasedTilesThisWeek(prev => new Set([...prev, tile.id]));
+
     const cardsList = biomeCards[tile.biome];
     const randomCard = cardsList[Math.floor(Math.random() * cardsList.length)];
-    addItemsToInventoryOrOverflow(randomCard);
+    
     setBuyConfirmModal(null);
     setInputTileId('');
     setRewardModalDrops(randomCard);
+
+    await addItemsToInventoryOrOverflow(randomCard);
+
+    if (userProfile?.id) {
+      const { data: freshInv, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('user_id', userProfile.id);
+
+      if (!error && freshInv) {
+        setInventory(freshInv);
+      }
+    }
   };
 
-  const handleOverflowSwap = (overflowIdx) => {
+  const handleOverflowSwap = async (overflowIdx) => {
     if (selectedInventoryIndex !== null) {
       let newInv = [...inventory];
       let newOverflow = [...overflowItems];
-      const temp = newInv[selectedInventoryIndex];
-      newInv[selectedInventoryIndex] = newOverflow[overflowIdx];
-      newOverflow[overflowIdx] = temp;
+      
+      const targetSlotItem = newInv[selectedInventoryIndex];
+      const overflowItem = newOverflow[overflowIdx];
+
+      if (targetSlotItem?.id) {
+        await supabase.from('inventory').delete().eq('id', targetSlotItem.id);
+      }
+
+      const newItemData = {
+        user_id: userProfile?.id,
+        name: overflowItem.name,
+        count: overflowItem.count,
+        equipment_slot: 'inventar'
+      };
+
+      const { data: inserted } = await supabase
+        .from('inventory')
+        .insert([newItemData])
+        .select();
+
+      if (inserted && inserted[0]) {
+        newInv[selectedInventoryIndex] = inserted[0];
+      }
+
+      newOverflow.splice(overflowIdx, 1);
+
       setInventory(newInv);
       setOverflowItems(newOverflow);
       setSelectedInventoryIndex(null);
@@ -452,7 +582,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
   };
 
   const highlightedTileId = parseInt(inputTileId, 10);
-  const currentWeekId = getCurrentWeekIdentifier();
 
   return (
     <div style={styles.mapTabWrapper}>
@@ -508,7 +637,7 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
                   const tileIdNum = parseInt(idStr, 10);
                   const { x, y } = getHexCoordinates(tileIdNum - 1);
                   const isHighlighted = highlightedTileId === tile.id;
-                  const isPurchasedThisWeek = (tile.purchasedWeeks || []).includes(currentWeekId);
+                  const isPurchasedThisWeek = purchasedTilesThisWeek.has(tile.id);
                   
                   return (
                     <g key={tile.id} transform={`translate(${x}, ${y})`} style={{ pointerEvents: 'none' }}>
@@ -537,12 +666,12 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
           <div style={styles.overflowModalBox}>
             <h3 style={styles.modalTitle}>⚠️ Inventář je plný!</h3>
             <p style={styles.modalText}>
-              Některé suroviny se ti nevlezly do batohu. Musíš je buď <b>prohodit</b> s předmětem v inventáři, nebo je <b>trvale vyhodit</b>. Dokud to neuděláš, nemůžeš pokračovat v nákupu!
+              Některé suroviny se ti nevlezly do batohu. Musíš je buď <b>prohodit</b> s předmětem v inventáři, nebo je <b>trvale vyhodit</b>.
             </p>
 
             <div style={{ marginBottom: '12px', width: '100%' }}>
               <span style={{ fontSize: '11px', color: '#fcd34d', display: 'block', marginBottom: '4px', textAlign: 'center', fontWeight: 'bold' }}>
-                1. Klikni na předmět v inventáři: {selectedInventoryIndex !== null ? `(Zvolen slot č. ${selectedInventoryIndex + 1})` : '(žádný - vyber slot)'}
+                1. Klikni na předmět v inventáři: {selectedInventoryIndex !== null ? `(Zvolen slot č. ${selectedInventoryIndex + 1})` : '(vyber slot)'}
               </span>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', maxWidth: '340px', margin: '0 auto' }}>
                 {Array.from({ length: totalInventorySlots }).map((_, index) => {
@@ -575,9 +704,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
               </div>
             </div>
 
-            <span style={{ fontSize: '11px', color: '#fca5a5', display: 'block', marginBottom: '4px', textAlign: 'center', fontWeight: 'bold' }}>
-              2. Klikni na červené pole pro prohození, nebo křížkem trvale vyhoď:
-            </span>
             <div style={styles.overflowGrid}>
               {overflowItems.map((item, idx) => (
                 <div 

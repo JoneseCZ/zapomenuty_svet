@@ -205,7 +205,7 @@ const styles = {
   levelBadge: { background: 'rgba(40,25,15,0.9)', border: '1px solid #8c6239', padding: '6px 12px', borderRadius: '6px', color: '#fbbf24', fontWeight: 'bold', fontSize: '12px' },
   parchmentBody: { display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '15px' },
   parchmentSubtitle: { color: '#fbbf24', margin: '0 0 4px 0', fontSize: '13px' },
-  recipeImage: { width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #8c6239' },
+  recipeImage: { width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #8c6239' },
   noImageBox: { width: '100%', height: '120px', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', border: '1px dashed #444', fontSize: '12px', borderRadius: '6px' },
   parchmentFooterInfo: { display: 'flex', justifyContent: 'space-between', width: '100%', background: 'rgba(0,0,0,0.4)', padding: '8px', borderRadius: '6px', border: '1px solid #553311', boxSizing: 'border-box' }
 };
