@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import PlayerDashboardMap from './PlayerDashboardMap';
-import UserHeader from './UserHeader';
 import { supabase } from './App';
-import PlayerDashboardRecipes from './PlayerDashboardRecipes';
+import PlayerDashboardCharacters from './PlayerDashboardCharacters';
+import PlayerDashboardInventory from './PlayerDashboardInventory';
 import PlayerDashboardCrafting from './PlayerDashboardCrafting';
-import PlayerDashboardMessages from './PlayerDashboardMessages';
+import PlayerDashboardMap from './PlayerDashboardMap';
+import PlayerDashboardRecipes from './PlayerDashboardRecipes';
 import PlayerDashboardQuests from './PlayerDashboardQuests';
-import PlayerDashboardInventory from './PlayerDashboardInventory'; // <--- NOVÝ IMPORT
+import PlayerDashboardMessages from './PlayerDashboardMessages';
+import { usePlayerProfessions, ProfessionModal } from './PlayerDashboardProfessions';
 
 const formatDate = (dateObj = new Date()) => {
   try {
@@ -40,19 +41,13 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
   const [gold, setGold] = useState(userProfile?.gold || 0);
   const [exp, setExp] = useState(userProfile?.exp || 0);
   
-  const currentLevel = Math.floor(exp / 1000) + 1;
-  const currentLevelExp = exp % 1000;
-  const nextLevelExp = 1000;
-  
-  const [inventory, setInventory] = useState(Array(20).fill(null));
+  const [inventory, setInventory] = useState([]);
   const [overflowItems, setOverflowItems] = useState([]);
 
-  // Stavy pro žebříček z výstroje a centimů
+  // Stavy pro žebříček, historii a nastavení
   const [showRankingModal, setShowRankingModal] = useState(false);
   const [rankingData, setRankingData] = useState([]);
   const [rankingLoading, setRankingLoading] = useState(false);
-
-  // Stavy pro kontrolu nepřečtených úkolů (pro notifikaci na tlačítku)
   const [hasUnreadQuests, setHasUnreadQuests] = useState(false);
 
   const [hasUnreadGoldHistory, setHasUnreadGoldHistory] = useState(false);
@@ -66,51 +61,87 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     return saved ? Number(saved) : 0;
   });
 
-  const saveInventoryToSupabase = async (newInventory, newOverflow) => {
-    setInventory(newInventory);
-    setOverflowItems(newOverflow);
+  const [goldHistory, setGoldHistory] = useState([]);
+  const [expHistory, setExpHistory] = useState([]);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [isExpHistoryModalOpen, setIsExpHistoryModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [settingsMessage, setSettingsMessage] = useState('');
+  
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('postava');
 
-    if (!userProfile?.id) return;
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ 
-        inventory: newInventory,
-        overflow_items: newOverflow 
-      })
-      .eq('id', userProfile.id);
-
-    if (error) {
-      console.error('Chyba při ukládání inventáře do Supabase:', error.message);
-    }
-  };
-
+  // Načtení dat hráče při startu
   useEffect(() => {
     if (!userProfile?.id) return;
 
     const fetchPlayerData = async () => {
-      const { data, error } = await supabase
+      // 1. Načtení profilu (zlato, equip, exp...)
+      const { data: profData, error: profError } = await supabase
         .from('profiles')
-        .select('inventory, equipment, gold, overflow_items, exp')
+        .select('equipment, gold, overflow_items, exp')
         .eq('id', userProfile.id)
         .single();
 
-      if (error) {
-        console.error('Chyba při načítání dat ze Supabase:', error.message);
-        return;
+      if (profError) {
+        console.error('Chyba při načítání profilu ze Supabase:', profError.message);
+      } else if (profData) {
+        if (profData.gold !== undefined) setGold(profData.gold);
+        if (profData.exp !== undefined) setExp(profData.exp);
+        if (profData.equipment) setEquipment(profData.equipment);
+        if (profData.overflow_items) setOverflowItems(profData.overflow_items);
       }
 
-      if (data) {
-        if (data.gold !== undefined) setGold(data.gold);
-        if (data.exp !== undefined) setExp(data.exp);
-        if (data.equipment) setEquipment(data.equipment);
-        if (data.overflow_items) setOverflowItems(data.overflow_items);
-        if (data.inventory && Array.isArray(data.inventory)) {
-          setInventory(data.inventory);
-        }
-      }
-    };
+      // 2. Načtení čistého inventáře hráče
+      const { data: invData, error: invError } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('user_id', userProfile.id);
 
+      // 3. Načtení encyklopedie předmětů (items)
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('items')
+        .select('*');
+
+      
+
+      if (invError || itemsError) {
+        console.error('Chyba při načítání dat:', invError?.message || itemsError?.message);
+      } else if (invData && itemsData) {
+        // 4. Spárování položek pomocí item_id (ošetříme i textové/UUID porovnání)
+        const itemsMap = {};
+        itemsData.forEach(item => {
+          itemsMap[String(item.id)] = item;
+        });
+
+        const mergedInventory = invData
+          .map(row => {
+            const matchedItem = itemsMap[String(row.item_id)] || null;
+            const matchedRecipe = row.recipes || null;
+
+            // Pokud řádek nemá platný předmět A ZÁROVEŇ nemá platný recept, 
+            // je to "osiřelý" poškozený záznam v databázi a přeskočíme ho (nebo ho smažeme)
+            if (!matchedItem && !matchedRecipe && !row.recipe_id) {
+              return null; 
+            }
+
+            return {
+              ...row,
+              items: matchedItem,
+              name: matchedItem?.name || matchedRecipe?.title || row.name || 'Neznámý předmět',
+              image_url: matchedItem?.image_url || (row.recipe_id ? '/items/recept_svitek.png' : ''),
+              max_stack: matchedItem?.max_stack || (row.recipe_id ? 1 : 10),
+              isRecipeScroll: Boolean(row.recipe_id || matchedRecipe),
+              recipeData: matchedRecipe
+            };
+          })
+          .filter(Boolean); // Odstraní null hodnoty (vyčistí to vadné položky)
+
+        
+        setInventory(mergedInventory);
+      }
+}
     fetchPlayerData();
     checkUnreadQuests();
   }, [userProfile?.id]);
@@ -160,19 +191,21 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     if (!userProfile?.id) return;
     const nowISO = new Date().toISOString();
     
+    // 1. Načteme všechny aktivní (viditelné a vypršené/aktuální) úkoly
     const { data: questsData } = await supabase
       .from('quests')
       .select('id')
-      .gt('expires_at', nowISO);
+      .eq('is_visible', true);
 
     if (!questsData || questsData.length === 0) {
       setHasUnreadQuests(false);
       return;
     }
 
+    // 2. Načteme záznamy hráče pro tyto úkoly
     const { data: playerQuestsData } = await supabase
       .from('player_quests')
-      .select('quest_id, read_at, completed')
+      .select('quest_id, read_at')
       .eq('user_id', userProfile.id);
 
     const pqMap = {};
@@ -180,24 +213,14 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       pqMap[pq.quest_id] = pq;
     });
 
+    // 3. Úkol je nepřečtený, pokud pro něj neexistuje záznam nebo chybí 'read_at'
     const unreadExists = questsData.some(q => {
       const pq = pqMap[q.id];
-      return !pq || !pq.read_at || !pq.completed;
+      return !pq || !pq.read_at;
     });
 
     setHasUnreadQuests(unreadExists);
   };
-
-  const [goldHistory, setGoldHistory] = useState([]);
-  const [expHistory, setExpHistory] = useState([]);
-  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-  const [isExpHistoryModalOpen, setIsExpHistoryModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [settingsMessage, setSettingsMessage] = useState('');
-  
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('postava');
 
   const fetchAndCleanHistory = async () => {
     if (!userProfile?.id) return;
@@ -272,12 +295,10 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
     }
   };
 
-  // Centrální funkce pro vyhození předmětu z inventáře s mazáním z DB
   const handleDiscardItemFromInventory = async (itemToDiscard) => {
     if (!itemToDiscard) return;
 
     try {
-      // Pokud předmět v inventáři obsahuje své reálné DB ID (nebo seznam ID), smažeme ho přímo z tabulky inventory v Supabase
       if (itemToDiscard.originalIds && Array.isArray(itemToDiscard.originalIds)) {
         for (const dbId of itemToDiscard.originalIds) {
           await supabase.from('inventory').delete().eq('id', dbId);
@@ -285,31 +306,47 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       } else if (itemToDiscard.id) {
         await supabase.from('inventory').delete().eq('id', itemToDiscard.id);
       } else {
-        // Fallback: pokud ID nemá, zkusíme smazat podle názvu uživatele
-        await supabase.from('inventory').delete().eq('user_id', userProfile.id).eq('name', itemToDiscard.name);
+        await supabase.from('inventory').delete().eq('user_id', userProfile.id);
       }
 
-      // Znovu načteme čerstvý inventář ze Supabase, aby byly stavy synchronizované
-      const { data: freshInv, error } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('user_id', userProfile.id);
+      // Znovunačtení inventáře po smazání včetně spárování s items
+      const { data: invData, error: invError } = await supabase
+  .from('inventory')
+  .select('*, recipes(*)') // <--- Klíčové: Připojení tabulky recipes pomocí relace
+  .eq('user_id', userProfile.id);
 
-      if (!error && freshInv) {
-        setInventory(freshInv);
+      const { data: itemsData } = await supabase
+        .from('items')
+        .select('*');
+
+      if (invData && itemsData) {
+        const itemsMap = {};
+        itemsData.forEach(item => {
+          itemsMap[item.id] = item;
+        });
+
+        const mergedInventory = invData.map(row => ({
+          ...row,
+          items: itemsMap[row.item_id] || null
+        }));
+
+        setInventory(mergedInventory);
       }
     } catch (err) {
       console.error('Chyba při mazání předmětu z databáze:', err.message);
     }
   };
 
-  const characterImage = userProfile?.gender === 'žena' ? '/postava_zena.png' : '/postava_muz.png';
   const baseSlots = 10;
   const backpackSpecialty = equipment.batoh?.specialty;
   const extraSlotsFromBackpack = backpackSpecialty?.key === 'extraSlots' ? Number(backpackSpecialty.value) : 0;
   const totalInventorySlots = baseSlots + extraSlotsFromBackpack;
 
   const currentBackground = activeTab === 'dilna' ? 'url(/crafting_pozadi.png)' : 'url(/pozadi_mlha.jpg)';
+  const playerTitle = `${userProfile?.nickname || 'Hrdina'}`;
+
+  const currentLevel = Math.floor(exp / 1000) + 1;
+  const { professions, showModal, setShowModal, chooseProfession } = usePlayerProfessions(userProfile?.id, currentLevel);
 
   const renderNavButton = (tabName, label, hasBadge = false) => {
     const isActive = activeTab === tabName;
@@ -333,9 +370,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       </div>
     );
   };
-
-  const expPercentage = Math.min(Math.max((currentLevelExp / nextLevelExp) * 100, 0), 100);
-  const playerTitle = `${userProfile?.nickname || 'Hrdina'}`;
 
   return (
     <div style={{ ...styles.container, backgroundImage: currentBackground }}>
@@ -372,6 +406,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         <span style={styles.nameValueMobile}>{playerTitle}</span>
       </div>
 
+      {/* MODÁLNÍ OKNO: ŽEBŘÍČEK */} 
       {showRankingModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalRankingCard}>
@@ -412,6 +447,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         </div>
       )}
 
+      {/* HLAVNÍ OBSAH A NAVIGACE */}
       <div style={styles.mainContent}>
         <div className="mobile-menu-toggle-container">
           <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={styles.mobileMenuBtn}>
@@ -423,56 +459,36 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           {renderNavButton('postava', 'Postava')}
           {renderNavButton('inventar', 'Inventář')}
           {renderNavButton('recepty', 'Recepty')}
-          {renderNavButton('dilna', 'Dílna')}
+          {renderNavButton('dilna', 'Výroba')}
           {renderNavButton('oznamovatel', 'Oznámovatel')}
           {renderNavButton('ukoly', 'Úkoly', hasUnreadQuests)}
           {renderNavButton('mapa', 'Mapa')}
         </div>
 
+        {/* VYKRESLOVÁNÍ JEDNOTLIVÝCH ZÁLOŽEK */}
         {activeTab === 'postava' && (
-          <div style={styles.characterMainWrapper}>
-            <div style={styles.levelPanel}>
-              <div style={styles.levelTitle}>Hráč LVL {currentLevel}</div>
-              <div style={styles.fuseContainer}>
-                <div style={{ ...styles.fuseFill, width: `${expPercentage}%` }}>
-                  <div style={styles.fuseSpark}>🔥</div>
-                </div>
-              </div>
-              <div style={styles.fuseStatsRow}>
-                <span>{currentLevelExp} XP</span>
-                <span>{nextLevelExp} XP</span>
-              </div>
-            </div>
-
-            <div className="dashboard-grid" style={styles.dashboardGrid}>
-              <div className="slot-column" style={styles.column}>
-                <Slot label="Hlava" iconFile="icon_hlava.png" item={equipment.hlava} />
-                <Slot label="Pravá ruka" iconFile="icon_prava_ruka.png" item={equipment.pravaRuka} />
-                <Slot label="Trup" iconFile="icon_trup.png" item={equipment.trup} />
-                <Slot label="Opasek" iconFile="icon_opasek.png" item={equipment.opasek} />
-                <Slot label="Rukavice" iconFile="icon_rukavice.png" item={equipment.rukavice} />
-              </div>
-
-              <div style={styles.characterContainer}>
-                <img src={characterImage} alt="Postava hrdiny" className="character-img" style={styles.characterImg} />
-              </div>
-
-              <div className="slot-column" style={styles.column}>
-                <Slot label="Plášť" iconFile="icon_plast.png" item={equipment.plast} />
-                <Slot label="Levá ruka" iconFile="icon_leva_ruka.png" item={equipment.levaRuka} />
-                <Slot label="Kalhoty" iconFile="icon_kalhoty.png" item={equipment.kalhoty} />
-                <Slot label="Boty" iconFile="icon_boty.png" item={equipment.boty} />
-                <Slot label="Batoh" iconFile="icon_batoh.png" item={equipment.batoh} />
-              </div>
-            </div>
-          </div>
+          <PlayerDashboardCharacters 
+            userProfile={userProfile} 
+            equipment={equipment} 
+            gold={gold} 
+            exp={exp}
+            professions={professions} 
+          />
         )}
 
-        {/* ZDE NYNÍ VYUŽÍVÁME NOVÝ SAMOSTATNÝ KOMPONENT */}
+      {/* Vyskakovací okno pro výběr povolání */}
+      <ProfessionModal 
+        isOpen={showModal} 
+        onSelect={(profId) => {
+          if (profId) chooseProfession(profId);
+          else setShowModal(false);
+        }} 
+      />
+
         {activeTab === 'inventar' && (
           <PlayerDashboardInventory 
             inventory={inventory}
-            setInventory={(newInv) => saveInventoryToSupabase(newInv, overflowItems)}
+            setInventory={setInventory}
             overflowItems={overflowItems}
             setOverflowItems={setOverflowItems}
             totalInventorySlots={totalInventorySlots}
@@ -483,7 +499,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         {activeTab === 'dilna' && (
           <PlayerDashboardCrafting 
             inventory={inventory} 
-            setInventory={(newInv) => saveInventoryToSupabase(newInv, overflowItems)} 
+            setInventory={setInventory} 
             totalInventorySlots={totalInventorySlots} 
             userProfile={userProfile}
           />
@@ -494,7 +510,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
             gold={gold}
             setGold={setGold}
             inventory={inventory}
-            setInventory={(newInv) => saveInventoryToSupabase(newInv, overflowItems)}
+            setInventory={setInventory}
             totalInventorySlots={totalInventorySlots}
             userProfile={userProfile}
           />
@@ -511,6 +527,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         )}
       </div>
 
+      {/* MODÁLNÍ OKNO: HISTORIE ZLAŤÁKŮ */}
       {isHistoryModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
@@ -529,6 +546,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         </div>
       )}
 
+      {/* MODÁLNÍ OKNO: HISTORIE XP */}
       {isExpHistoryModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
@@ -547,6 +565,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         </div>
       )}
 
+      {/* MODÁLNÍ OKNO: NASTAVENÍ / HESLO */}
       {isSettingsModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
@@ -569,8 +588,6 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
       )}
 
       <style>{`
-        .character-img { max-width: 170px !important; }
-        .slot-column { max-width: 90px !important; }
         .logout-btn { padding: 6px 14px !important; font-size: 12px !important; }
         .mobile-menu-toggle-container { display: none; }
         .mobile-name-wrapper { display: none; }
@@ -584,30 +601,12 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
         @media (max-width: 768px) {
           .desktop-name { display: none !important; }
           .mobile-name-wrapper { display: flex; justify-content: center; width: 100%; margin-bottom: 6px; }
-          .dashboard-grid { gap: 10px !important; }
-          .character-img { max-width: 120px !important; }
-          .slot-column { max-width: 65px !important; }
           .logout-btn { padding: 4px 10px !important; font-size: 10px !important; }
           .mobile-menu-toggle-container { display: block; width: 100%; margin-bottom: 8px; text-align: center; }
           .game-navigation { display: none !important; flex-direction: column !important; width: 100% !important; margin-bottom: 12px !important; gap: 8px !important; }
           .game-navigation.open { display: flex !important; }
         }
       `}</style>
-    </div>
-  );
-}
-
-function Slot({ label, iconFile, item }) {
-  return (
-    <div style={styles.slotBox}>
-      {item ? (
-        <span style={styles.itemText}>{item.name || item}</span>
-      ) : (
-        <div style={styles.slotPlaceholder}>
-          <img src={`/${iconFile}`} alt={label} style={styles.slotIconImg} />
-          <span style={styles.slotLabel}>{label}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -631,22 +630,6 @@ const styles = {
   navButtonAlert: { animation: 'pulseGlow 1.5s infinite ease-in-out' },
   navBadgeDot: { position: 'absolute', top: '2px', right: '4px', width: '10px', height: '10px', backgroundColor: '#dc2626', borderRadius: '50%', border: '1px solid #fee2e2' },
   mobileMenuBtn: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '12px 20px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px', width: '100%' },
-  characterMainWrapper: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '450px' },
-  levelPanel: { width: '100%', background: 'transparent', border: 'none', borderRadius: '0', padding: '4px 0', marginBottom: '8px', boxSizing: 'border-box' },
-  levelTitle: { fontFamily: 'Palatino Linotype', fontSize: '16px', color: '#fbbf24', fontWeight: 'bold', textAlign: 'center', marginBottom: '4px', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
-  fuseContainer: { width: '100%', height: '10px', background: '#2a1810', borderRadius: '5px', border: '1px solid #57341e', position: 'relative', overflow: 'visible', marginBottom: '4px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.9)' },
-  fuseFill: { height: '100%', background: 'linear-gradient(90deg, #b45309, #f59e0b, #ef4444)', borderRadius: '4px', position: 'relative', transition: 'width 0.4s ease' },
-  fuseSpark: { position: 'absolute', right: '-10px', top: '-8px', fontSize: '16px', filter: 'drop-shadow(0 0 4px #f59e0b)' },
-  fuseStatsRow: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontFamily: 'Palatino Linotype', color: '#d1d5db', fontWeight: 'bold', textShadow: '0 1px 3px rgba(0,0,0,0.9)' },
-  dashboardGrid: { display: 'flex', justifyContent: 'space-between', alignContent: 'center', alignItems: 'center', width: '100%', gap: '15px' },
-  column: { display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 },
-  characterContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1.5, background: 'transparent', border: 'none', boxShadow: 'none' },
-  characterImg: { height: 'auto', background: 'transparent', filter: 'drop-shadow(0px 8px 16px rgba(0,0,0,0.9))' },
-  slotBox: { width: '100%', aspectRatio: '1 / 1', borderRadius: '6px', border: '2px solid #b45309', background: 'rgba(30, 15, 5, 0.9)', boxShadow: '0 4px 6px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' },
-  slotPlaceholder: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', padding: '2px' },
-  slotIconImg: { width: '40%', height: '40%', objectFit: 'contain', filter: 'grayscale(100%) brightness(1.6)', opacity: '0.9' },
-  slotLabel: { fontSize: '9px', fontFamily: 'Palatino Linotype', color: '#d1d5db', fontWeight: 'bold', textAlign: 'center', textTransform: 'uppercase' },
-  itemText: { fontSize: '10px', fontFamily: 'Palatino Linotype', color: '#ffffff', fontWeight: 'bold', textAlign: 'center', padding: '4px' },
   placeholderTabContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px', background: 'rgba(30, 15, 5, 0.9)', border: '2px solid #b45309', borderRadius: '10px', width: '100%', boxSizing: 'border-box', marginTop: '10px' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },

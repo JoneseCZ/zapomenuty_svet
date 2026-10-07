@@ -11,6 +11,9 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
   const [alertModalMessage, setAlertModalMessage] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
 
+  // 📜 Stav pro interakci se svitkem receptu
+  const [selectedRecipeScroll, setSelectedRecipeScroll] = useState(null);
+
   const [purchasedTilesThisWeek, setPurchasedTilesThisWeek] = useState(new Set());
 
   const [scale, setScale] = useState(1);
@@ -18,6 +21,40 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const mapContainerRef = useRef(null);
+
+  // 🗺 Mapa ikonek podle názvů surovin
+  const itemIcons = {
+    'Hlína': '/items/hlina.png',
+    'Klacek': '/items/klacek.png',
+    'Strom': '/items/strom.png',
+    'Tráva': '/items/trava.png',
+    'Léčivá bylina': '/items/leciva_bylina.png',
+    'Křemen': '/items/kremen.png',
+    'Vlašský ořech': '/items/vlassky_orech.png',
+    'Břidlice': '/items/bridlice.png',
+    'Bylinky': '/items/bylinky.png',
+    'Králík': '/items/kralik.png',
+    'Včelí vosk': '/items/vceli_vosk.png',
+    'Kostival': '/items/kostival.png',
+    'Pryskyřice': '/items/pryskyrice.png',
+    'Uhlí': '/items/uhli.png',
+    'Jehličí': '/items/jehlici.png',
+    'Železo': '/items/zelezo.png',
+    'Tvrdé dřevo': '/items/tvrde_drevo.png',
+    'Měkké dřevo': '/items/mekke_drevo.png',
+    'Voda': '/items/voda.png',
+    'Bambus': '/items/bambus.png',
+    'Živočišný tuk': '/items/zivocisny_tuk.png',
+    'Liána': '/items/liana.png',
+    'Kost': '/items/kost.png',
+    'Surová kůže': '/items/surova_kuze.png',
+    'Peří': '/items/peri.png',
+    'Kožený batoh': '/items/kozeny_batoh.png',
+    'Lepší sekera': '/items/lepsi_sekera.png',
+    'Lepší nůž': '/items/lepsi_nuz.png',
+    'Receptový svitek': '/items/recept_svitek.png',
+    'Svitek receptu': '/items/recept_svitek.png'
+  };
 
   const biomeCards = {
     louka: [
@@ -31,7 +68,7 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Hlína', count: 2 }, { name: 'Křemen', count: 1 }],
       [{ name: 'Hlína', count: 3 }, { name: 'Vlašský ořech', count: 1 }],
       [{ name: 'Hlína', count: 4 }, { name: 'Břidlice', count: 1 }],
-      [{ name: 'Hlína', count: 5 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Hlína', count: 5 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Hlína', count: 6 }],
       [{ name: 'Hlína', count: 7 }, { name: 'Křemen', count: 1 }],
       [{ name: 'Hlína', count: 8 }],
@@ -45,17 +82,17 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Tráva', count: 3 }, { name: 'Křemen', count: 1 }],
       [{ name: 'Tráva', count: 2 }, { name: 'Klacek', count: 2 }],
       [{ name: 'Tráva', count: 3 }, { name: 'Léčivá bylina', count: 1 }],
-      [{ name: 'Tráva', count: 4 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Tráva', count: 4 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Tráva', count: 5 }, { name: 'Křemen', count: 1 }],
       [{ name: 'Tráva', count: 6 }],
       [{ name: 'Tráva', count: 7 }],
       [{ name: 'Tráva', count: 8 }],
       [{ name: 'Králík', count: 1 }, { name: 'Tráva', count: 3 }],
-      [{ name: 'Králík', count: 1 }, { name: 'Tráva', count: 4 }, { name: 'Bylina', count: 1 }],
+      [{ name: 'Králík', count: 1 }, { name: 'Tráva', count: 4 }, { name: 'Bylinky', count: 1 }],
       [{ name: 'Včelí vosk', count: 1 }, { name: 'Klacek', count: 2 }],
       [{ name: 'Včelí vosk', count: 2 }, { name: 'Tráva', count: 3 }],
-      [{ name: 'Bylina', count: 3 }, { name: 'Tráva', count: 2 }, { name: 'Hlína', count: 3 }],
-      [{ name: 'Bylina', count: 3 }, { name: 'Hlína', count: 3 }, { name: 'Břidlice', count: 1 }],
+      [{ name: 'Bylinky', count: 3 }, { name: 'Tráva', count: 2 }, { name: 'Hlína', count: 3 }],
+      [{ name: 'Bylinky', count: 3 }, { name: 'Hlína', count: 3 }, { name: 'Břidlice', count: 1 }],
       [{ name: 'Vlašský ořech', count: 1 }],
       [{ name: 'Vlašský ořech', count: 2 }, { name: 'Tráva', count: 2 }],
       [{ name: 'Kostival', count: 1 }, { name: 'Tráva', count: 4 }],
@@ -122,26 +159,26 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Králík', count: 1 }, { name: 'Hlína', count: 1 }],
       [{ name: 'Králík', count: 1 }, { name: 'Křemen', count: 1 }],
       [{ name: 'Králík', count: 1 }, { name: 'Léčivá bylina', count: 1 }],
-      [{ name: 'Králík', count: 1 }, { name: 'Voda', count: 1 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Králík', count: 1 }, { name: 'Voda', count: 1 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Králík', count: 1 }, { name: 'Tráva', count: 4 }],
-      [{ name: 'Králík', count: 1 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Králík', count: 1 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Vlašský ořech', count: 2 }, { name: 'Klacek', count: 2 }],
       [{ name: 'Vlašský ořech', count: 1 }, { name: 'Klacek', count: 1 }, { name: 'Hlína', count: 1 }],
       [{ name: 'Křemen', count: 1 }, { name: 'Včelí vosk', count: 1 }],
       [{ name: 'Křemen', count: 2 }, { name: 'Kostival', count: 1 }],
       [{ name: 'Křemen', count: 2 }, { name: 'Strom', count: 1 }, { name: 'Voda', count: 2 }],
       [{ name: 'Křemen', count: 2 }, { name: 'Vlašský ořech', count: 1 }],
-      [{ name: 'Křemen', count: 1 }, { name: 'Kostival', count: 1 }, { name: 'Bylina', count: 1 }],
+      [{ name: 'Křemen', count: 1 }, { name: 'Kostival', count: 1 }, { name: 'Bylinky', count: 1 }],
       [{ name: 'Křemen', count: 1 }, { name: 'Voda', count: 2 }],
       [{ name: 'Břidlice', count: 2 }, { name: 'Uhlí', count: 2 }],
       [{ name: 'Břidlice', count: 1 }, { name: 'Železo', count: 3 }],
       [{ name: 'Břidlice', count: 1 }, { name: 'Tráva', count: 3 }],
-      [{ name: 'Hlína', count: 3 }, { name: 'Voda', count: 1 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Hlína', count: 3 }, { name: 'Voda', count: 1 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Hlína', count: 3 }, { name: 'Strom', count: 1 }],
       [{ name: 'Hlína', count: 2 }, { name: 'Klacek', count: 3 }, { name: 'Pryskyřice', count: 1 }],
-      [{ name: 'Hlína', count: 2 }, { name: 'Bylina', count: 3 }],
+      [{ name: 'Hlína', count: 2 }, { name: 'Bylinky', count: 3 }],
       [{ name: 'Hlína', count: 4 }, { name: 'Tráva', count: 2 }, { name: 'Voda', count: 1 }],
-      [{ name: 'Bambus', count: 1 }, { name: 'Bylina', count: 1 }],
+      [{ name: 'Bambus', count: 1 }, { name: 'Bylinky', count: 1 }],
       [{ name: 'Bambus', count: 2 }, { name: 'Tráva', count: 2 }, { name: 'Voda', count: 1 }],
       [{ name: 'Bambus', count: 2 }, { name: 'Léčivá bylina', count: 1 }],
       [{ name: 'Bambus', count: 2 }, { name: 'Živočišný tuk', count: 1 }, { name: 'Voda', count: 2 }]
@@ -164,7 +201,7 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Klacek', count: 5 }, { name: 'Kostival', count: 2 }, { name: 'Strom', count: 2 }],
       [{ name: 'Klacek', count: 4 }, { name: 'Kost', count: 3 }],
       [{ name: 'Klacek', count: 3 }, { name: 'Kostival', count: 3 }],
-      [{ name: 'Klacek', count: 2 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Klacek', count: 2 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Klacek', count: 2 }, { name: 'Živočišný tuk', count: 3 }],
       [{ name: 'Klacek', count: 2 }, { name: 'Hlína', count: 3 }],
       [{ name: 'Klacek', count: 1 }, { name: 'Strom', count: 1 }],
@@ -197,10 +234,10 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Železo', count: 6 }, { name: 'Tvrdé dřevo', count: 1 }],
       [{ name: 'Železo', count: 5 }, { name: 'Klacek', count: 1 }],
       [{ name: 'Železo', count: 5 }, { name: 'Tvrdé dřevo', count: 2 }],
-      [{ name: 'Železo', count: 4 }, { name: 'Bylina', count: 1 }],
+      [{ name: 'Železo', count: 4 }, { name: 'Bylinky', count: 1 }],
       [{ name: 'Železo', count: 4 }],
       [{ name: 'Železo', count: 4 }, { name: 'Uhlí', count: 3 }],
-      [{ name: 'Železo', count: 2 }, { name: 'Kostival', count: 3 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Železo', count: 2 }, { name: 'Kostival', count: 3 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Železo', count: 4 }, { name: 'Kost', count: 2 }],
       [{ name: 'Železo', count: 3 }, { name: 'Králík', count: 1 }],
       [{ name: 'Železo', count: 3 }, { name: 'Tráva', count: 3 }],
@@ -212,7 +249,7 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       [{ name: 'Železo', count: 2 }, { name: 'Strom', count: 1 }],
       [{ name: 'Železo', count: 2 }],
       [{ name: 'Uhlí', count: 7 }, { name: 'Tráva', count: 1 }],
-      [{ name: 'Uhlí', count: 8 }, { name: 'Bylina', count: 2 }],
+      [{ name: 'Uhlí', count: 8 }, { name: 'Bylinky', count: 2 }],
       [{ name: 'Uhlí', count: 9 }, { name: 'Železo', count: 9 }],
       [{ name: 'Uhlí', count: 6 }, { name: 'Břidlice', count: 5 }],
       [{ name: 'Uhlí', count: 5 }, { name: 'Léčivá bylina', count: 1 }, { name: 'Železo', count: 3 }],
@@ -240,7 +277,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     hory: 'Hory',
   };
 
-  // Generování statických definic políček (1 až 476)
   const mapTiles = (() => {
     const tiles = {};
     const ranges = [
@@ -287,7 +323,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     return tiles;
   })();
 
-  // Výpočet týdenního identifikátoru (reset každé úterý ve 12:00)
   const getCurrentWeekIdentifier = () => {
     const now = new Date();
     const d = new Date(now);
@@ -301,22 +336,48 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
 
   const currentWeekId = getCurrentWeekIdentifier();
 
-  // Načtení nákupů a inventáře ze Supabase při startu nebo změně uživatele
   useEffect(() => {
     if (!userProfile?.id) return;
 
     const fetchData = async () => {
-      // 1. Načtení inventáře
       const { data: invData, error: invError } = await supabase
         .from('inventory')
         .select('*')
         .eq('user_id', userProfile.id);
 
+      const { data: itemsData } = await supabase.from('items').select('*');
+      const { data: recipesData } = await supabase.from('recipes').select('*'); // <--- Načíst recepty
+
+      // Vytvoříme si slovník receptů podle ID
+const recipesMap = {};
+if (recipesData) {
+  recipesData.forEach(r => { recipesMap[r.id] = r; });
+}
+
+// Obohatíme inventář o data receptu
+const enrichedInventory = invData.map(item => ({
+  ...item,
+  recipeData: recipesMap[item.recipe_id] || null
+}));
+
+setInventory(enrichedInventory);
+
       if (!invError && invData) {
-        setInventory(invData);
+        const itemsMap = {};
+        if (itemsData) itemsData.forEach(it => { itemsMap[it.id] = it; });
+
+        const recipesMap = {};
+        if (recipesData) recipesData.forEach(r => { recipesMap[r.id] = r; }); // <--- Mapa receptů
+
+        const enrichedInv = invData.map(inv => ({
+          ...inv,
+          items: itemsMap[inv.item_id] || {},
+          recipeData: recipesMap[inv.recipe_id] || null // <--- Spárování receptu podle recipe_id
+        }));
+
+        setInventory(enrichedInv);
       }
 
-      // 2. Načtení zakoupených políček pro aktuální týden z DB
       const { data: tileData, error: tileError } = await supabase
         .from('user_map_tiles')
         .select('tile_id')
@@ -379,25 +440,160 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     setPosition({ x: mouseX - (mouseX - position.x) * (newScale / scale), y: mouseY - (mouseY - position.y) * (newScale / scale) });
   };
 
-  const addItemsToInventoryOrOverflow = async (cardDrops) => {
+  // 📜 Logika pro losování náhodného receptu podle zadání
+  const rollRandomRecipe = async () => {
+    try {
+      const { data: allRecipes, error } = await supabase.from('recipes').select('*');
+      if (error || !allRecipes || allRecipes.length === 0) return null;
+
+      // Určíme kategorii podle pravděpodobností:
+      // 50% LVL 1 pro všechny (required_level = 1, required_profession is null / všichni)
+      // 30% LVL 2 pro všechny (required_level = 2, required_profession is null / všichni)
+      // 20% LVL 2 pro povolání (required_level = 2, required_profession is not null)
+      // 10% LVL 3 pro povolání (required_level = 3, required_profession is not null)
+      const roll = Math.random() * 100;
+      let targetLevel = 1;
+      let needsProfession = false;
+
+      if (roll < 50) {
+        targetLevel = 1;
+        needsProfession = false;
+      } else if (roll < 80) { // 50 + 30
+        targetLevel = 2;
+        needsProfession = false;
+      } else if (roll < 100) { // 80 + 20 (zde rozdělíme zbývajících 20% na 2/3 a 1/3, nebo přesně podle zadání: 20% LVL 2 pro povolání, 10% LVL 3 pro povolání)
+        // Upřesnění součtu: 50 + 30 + 20 + 10 = 110. Upravíme intervaly:
+        // 0 - 50 (50%): LVL 1 všichni
+        // 50 - 80 (30%): LVL 2 všichni
+        // 80 - 95 (15% -> upravíme na přesné váhy z 30% pro povolání: 20/(20+10) = 66% z 30% tj. do 100?)
+        // Udělejme to přesně podle rozdělení:
+      }
+
+      // Bezpečnější výběr podle vah:
+      const subRoll = Math.random();
+      let pool = [];
+      
+      if (subRoll < 0.50) {
+        // 50% LVL 1 pro všechny
+        pool = allRecipes.filter(r => (r.required_level || 1) === 1 && (!r.required_profession || r.required_profession.trim() === '' || r.required_profession.toLowerCase() === 'všichni' || r.required_profession.toLowerCase() === 'kdokoliv'));
+      } else if (subRoll < 0.80) {
+        // 30% LVL 2 pro všechny
+        pool = allRecipes.filter(r => (r.required_level || 1) === 2 && (!r.required_profession || r.required_profession.trim() === '' || r.required_profession.toLowerCase() === 'všichni' || r.required_profession.toLowerCase() === 'kdokoliv'));
+      } else if (subRoll < 0.95) {
+        // 20% LVL 2 pro povolání
+        pool = allRecipes.filter(r => (r.required_level || 1) === 2 && r.required_profession && r.required_profession.trim() !== '' && r.required_profession.toLowerCase() !== 'všichni');
+      } else {
+        // 10% LVL 3 pro povolání
+        pool = allRecipes.filter(r => (r.required_level || 1) >= 3 && r.required_profession && r.required_profession.trim() !== '' && r.required_profession.toLowerCase() !== 'všichni');
+      }
+
+      // Pokud v daném poolu nic není, vezmeme náhodný recept ze všech
+      if (!pool || pool.length === 0) {
+        pool = allRecipes;
+      }
+
+      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      return chosen;
+    } catch (err) {
+      console.error('Chyba při losování receptu:', err);
+      return null;
+    }
+  };
+  
+
+
+  const addItemsToInventoryOrOverflow = async (cardDrops, foundRecipe = null) => {
     let newInv = [...inventory];
     let newOverflow = [...overflowItems];
     let hasOverflowed = false;
 
-    for (const drop of cardDrops) {
+    let dropsToAdd = [...cardDrops];
+
+    // 📜 Pokud byl nalezen recept, přidáme ho do seznamu dropů
+    if (foundRecipe) {
+      dropsToAdd.push({
+        name: 'Svitek receptu',
+        count: 1,
+        image_url: '/items/recept_svitek.png',
+        max_stack: 1,
+        recipe_id: foundRecipe.id,
+        recipeData: foundRecipe,
+        isRecipeScroll: true
+      });
+    }
+
+    for (const drop of dropsToAdd) {
       let remaining = drop.count;
       const itemName = drop.name;
-      
-      // Zjistíme maximální stohovatelnost pro tento předmět (výchozí např. 10, pro nástroje 1)
-      // Tuto hodnotu můžeme vytáhnout z definice receptů nebo objektu předmětu
-      const maxStackLimit = drop.max_stack !== undefined ? drop.max_stack : (itemName.toLowerCase().includes('nůž') ? 1 : 10);
 
-      // 1. Doplňování existujících stohů do limitu maxStackLimit
+      // 📜 1. SPECIÁLNÍ ZPRACOVÁNÍ PRO SVITEK RECEPTU
+      if (drop.isRecipeScroll) {
+        if (newInv.length >= totalInventorySlots) {
+          hasOverflowed = true;
+          newOverflow.push({ 
+            name: drop.name, 
+            count: 1, 
+            isRecipeScroll: true, 
+            recipe_id: drop.recipe_id, 
+            recipeData: drop.recipeData, 
+            max_stack: 1 
+          });
+          continue;
+        }
+
+        // Vložíme do tabulky inventory s recipe_id (item_id bude v DB null)
+        const { data: insertedData, error } = await supabase
+          .from('inventory')
+          .insert([{
+            user_id: userProfile?.id,
+            item_id: null,
+            count: 1,
+            recipe_id: drop.recipe_id
+          }])
+          .select('*, recipes(*)');
+
+        if (error) {
+          console.error("Chyba při vkládání svitku do inventáře:", error);
+          setAlertModalMessage(`Chyba při ukládání svitku: ${error.message}`);
+          continue;
+        }
+
+        if (insertedData && insertedData[0]) {
+          newInv.push({
+            ...insertedData[0],
+            name: 'Svitek receptu',
+            image_url: '/items/recept_svitek.png',
+            max_stack: 1,
+            count: 1,
+            isRecipeScroll: true,
+            recipeData: insertedData[0].recipes || drop.recipeData
+          });
+        }
+        continue;
+      }
+
+      // --- 2. BĚŽNÉ SUROVINY (Jednotný název podle tabulky items) ---
+      const { data: itemDef, error: itemDefError } = await supabase
+        .from('items')
+        .select('id, max_stack')
+        .eq('name', itemName)
+        .maybeSingle();
+
+      if (itemDefError || !itemDef) {
+        console.warn(`Předmět "${itemName}" nebyl nalezen v tabulce items. Zkontroluj shodu názvů.`);
+        continue;
+      }
+
+      const itemId = itemDef.id;
+      const maxStackLimit = itemDef.max_stack || 10;
+
+      // Skládání do existujících slotů v inventáři
       for (let i = 0; i < newInv.length; i++) {
         if (remaining <= 0) break;
         const currentItem = newInv[i];
+        if (currentItem.isRecipeScroll) continue;
 
-        if (currentItem && currentItem.name === itemName) {
+        if (currentItem.item_id === itemId) {
           const currentCount = Number(currentItem.count) || 1;
           
           if (currentCount < maxStackLimit) {
@@ -405,12 +601,10 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
             const take = Math.min(spaceLeft, remaining);
             const newCount = currentCount + take;
 
-            if (currentItem.id) {
-              await supabase
-                .from('inventory')
-                .update({ count: newCount })
-                .eq('id', currentItem.id);
-            }
+            await supabase
+              .from('inventory')
+              .update({ count: newCount })
+              .eq('id', currentItem.id);
 
             newInv[i] = { ...currentItem, count: newCount };
             remaining -= take;
@@ -418,40 +612,38 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
         }
       }
 
-      // 2. Vytváření nových slotů, pokud maxStackLimit > 1 nebo pokud se nejedná o unikátní nástroj
+      // Vkládání nových slotů, pokud zbývají kusy
       while (remaining > 0) {
         if (newInv.length >= totalInventorySlots) break;
 
-        const take = maxStackLimit === 1 ? 1 : Math.min(maxStackLimit, remaining);
-        const newItem = {
-          user_id: userProfile?.id,
-          name: itemName,
-          count: take,
-          max_stack: maxStackLimit,
-          equipment_slot: 'inventar'
-        };
-
+        const take = Math.min(maxStackLimit, remaining);
+        
         const { data: insertedData, error } = await supabase
           .from('inventory')
-          .insert([newItem])
-          .select();
+          .insert([{
+            user_id: userProfile?.id,
+            item_id: itemId,
+            count: take
+          }])
+          .select('*, items(*)');
 
         if (!error && insertedData && insertedData[0]) {
           newInv.push(insertedData[0]);
           remaining -= take;
         } else {
+          console.error("Chyba při vkládání do inventáře:", error);
           break;
         }
       }
 
-      // 3. Přebytky
+      // Pokud je inventář plný a něco zbylo, jde to do overflow
       if (remaining > 0) {
         hasOverflowed = true;
-        const existing = newOverflow.find(o => o.name === itemName);
+        const existing = newOverflow.find(o => o.name === itemName && !o.isRecipeScroll);
         if (existing) {
           existing.count += remaining;
         } else {
-          newOverflow.push({ name: itemName, count: remaining });
+          newOverflow.push({ name: itemName, count: remaining, max_stack: maxStackLimit });
         }
       }
     }
@@ -466,17 +658,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
 
   const handleBuySubmit = async (e) => {
     e.preventDefault();
-
-    if (userProfile?.id) {
-      const { data: freshInv, error } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('user_id', userProfile.id);
-
-      if (!error && freshInv) {
-        setInventory(freshInv);
-      }
-    }
 
     if (overflowItems.length > 0) {
       setAlertModalMessage('Nemůžeš nakupovat, dokud nevyřešíš přebytečné suroviny v inventáři!');
@@ -506,7 +687,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
       return;
     }
 
-    // Uložení nákupu políčka do Supabase tabulky
     const { error: insertError } = await supabase
       .from('user_map_tiles')
       .insert([{
@@ -527,57 +707,116 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
     const cardsList = biomeCards[tile.biome];
     const randomCard = cardsList[Math.floor(Math.random() * cardsList.length)];
     
+    // 🎲 2% šance na nalezení receptu na jakémkoliv políčku
+    let foundRecipe = null;
+    const recipeRoll = Math.random() * 100;
+    if (recipeRoll < 100) {    // Změněno na 100% pro testování, původně 2%
+      foundRecipe = await rollRandomRecipe();
+    }
+
     setBuyConfirmModal(null);
     setInputTileId('');
-    setRewardModalDrops(randomCard);
+    setRewardModalDrops({ drops: randomCard, recipe: foundRecipe });
 
-    await addItemsToInventoryOrOverflow(randomCard);
-
-    if (userProfile?.id) {
-      const { data: freshInv, error } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('user_id', userProfile.id);
-
-      if (!error && freshInv) {
-        setInventory(freshInv);
-      }
-    }
+    await addItemsToInventoryOrOverflow(randomCard, foundRecipe);
   };
 
   const handleOverflowSwap = async (overflowIdx) => {
-    if (selectedInventoryIndex !== null) {
-      let newInv = [...inventory];
-      let newOverflow = [...overflowItems];
-      
-      const targetSlotItem = newInv[selectedInventoryIndex];
-      const overflowItem = newOverflow[overflowIdx];
+    if (selectedInventoryIndex === null) {
+      setAlertModalMessage('Nejprve vyber slot v inventáři, kam chceš předmět umístit!');
+      return;
+    }
 
-      if (targetSlotItem?.id) {
-        await supabase.from('inventory').delete().eq('id', targetSlotItem.id);
-      }
+    let newInv = [...inventory];
+    let newOverflow = [...overflowItems];
+    
+    const targetSlotItem = newInv[selectedInventoryIndex];
+    const overflowItem = newOverflow[overflowIdx];
 
-      const newItemData = {
-        user_id: userProfile?.id,
-        name: overflowItem.name,
-        count: overflowItem.count,
-        equipment_slot: 'inventar'
+    if (targetSlotItem?.id) {
+      await supabase.from('inventory').delete().eq('id', targetSlotItem.id);
+    }
+
+    const { data: itemDef, error: itemDefError } = await supabase
+      .from('items')
+      .select('id, max_stack')
+      .eq('name', overflowItem.isRecipeScroll ? 'Receptový svitek' : overflowItem.name)
+      .single();
+
+    const currentItemDef = itemDef || { id: null };
+
+    // ZDE OPRAVA: Pokud je to svitek, pošleme item_id: null a přibalíme recipe_id!
+    const newItemData = {
+      user_id: userProfile?.id,
+      item_id: overflowItem.isRecipeScroll ? null : currentItemDef.id,
+      count: overflowItem.count,
+      ...(overflowItem.isRecipeScroll && { recipe_id: overflowItem.recipe_id })
+    };
+
+    const { data: inserted, error } = await supabase
+      .from('inventory')
+      .insert([newItemData])
+      .select('*, recipes(*)');
+
+    if (!error && inserted && inserted[0]) {
+      const insertedWithItem = {
+        ...inserted[0],
+        name: 'Svitek receptu',
+        image_url: '/items/recept_svitek.png',
+        max_stack: 1,
+        isRecipeScroll: overflowItem.isRecipeScroll,
+        recipeData: inserted[0].recipes || overflowItem.recipeData
       };
-
-      const { data: inserted } = await supabase
-        .from('inventory')
-        .insert([newItemData])
-        .select();
-
-      if (inserted && inserted[0]) {
-        newInv[selectedInventoryIndex] = inserted[0];
-      }
-
+      newInv[selectedInventoryIndex] = insertedWithItem;
       newOverflow.splice(overflowIdx, 1);
-
       setInventory(newInv);
       setOverflowItems(newOverflow);
       setSelectedInventoryIndex(null);
+    } else {
+      console.error("Chyba při přesunu z přebytků:", error);
+      setAlertModalMessage('Chyba při přesunu předmětu z přebytků: ' + (error?.message || 'Neznámá chyba'));
+    }
+  };
+
+  // 📜 Funkce pro naučení receptu ze svitku
+  const handleLearnRecipeFromScroll = async (scrollItem, recipe) => {
+    if (!recipe || !userProfile?.id) return;
+
+    // Kontrola podmínek (LVL a povolání)
+    const playerLevel = Math.floor((userProfile.exp || 0) / 1000) + 1;
+    const requiredLevel = recipe.required_level || 1;
+    const requiredProf = (recipe.required_profession || '').trim().toLowerCase();
+    const playerProf = (userProfile.profession || '').trim().toLowerCase();
+
+    const levelMet = playerLevel >= requiredLevel;
+    const profMet = !requiredProf || requiredProf === '' || requiredProf === 'všichni' || requiredProf === 'kdokoliv' || requiredProf === 'nic' || playerProf === requiredProf;
+
+    if (!levelMet || !profMet) {
+      setAlertModalMessage(`Nesplňuješ podmínky pro tento recept!\nPožadovaný level: ${requiredLevel} (máš ${playerLevel})\nPožadované povolání: ${recipe.required_profession || 'Všichni'}`);
+      return;
+    }
+
+    try {
+      // 1. Vložit do player_recipes
+      const { error: learnErr } = await supabase
+        .from('player_recipes')
+        .insert([{ user_id: userProfile.id, recipe_id: recipe.id }]);
+
+      if (learnErr && !learnErr.message.includes('unique')) {
+        console.error('Chyba při učení receptu:', learnErr.message);
+      }
+
+      // 2. Smazat svitek z inventáře
+      if (scrollItem.id) {
+        await supabase.from('inventory').delete().eq('id', scrollItem.id);
+      }
+
+      setInventory(prev => prev.filter(item => item.id !== scrollItem.id));
+      setSelectedRecipeScroll(null);
+      setAlertModalMessage(`🎉 Úspěšně ses naučil nový recept: ${recipe.title}!`);
+
+    } catch (err) {
+      console.error('Chyba:', err);
     }
   };
 
@@ -660,7 +899,6 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
         </div>
       </div>
 
-      {/* BLOKOVACÍ MODÁLNÍ OKNO PRO PŘEBYTKY */}
       {overflowItems.length > 0 && (
         <div style={styles.modalOverlay}>
           <div style={styles.overflowModalBox}>
@@ -676,6 +914,8 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', maxWidth: '340px', margin: '0 auto' }}>
                 {Array.from({ length: totalInventorySlots }).map((_, index) => {
                   const item = inventory[index];
+                  const itemName = item?.items?.name || item?.name;
+                  const itemImg = item?.items?.image_url || item?.image_url || itemIcons[itemName];
                   const isSelected = selectedInventoryIndex === index;
                   return (
                     <div 
@@ -687,13 +927,16 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
                         border: isSelected ? '2px solid #fbbf24' : '1px solid #b45309',
                         borderRadius: '4px',
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer', padding: '2px'
+                        cursor: 'pointer', padding: '2px', position: 'relative'
                       }}
                     >
                       {item ? (
                         <>
-                          <span style={{ fontSize: '9px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                          <span style={{ fontSize: '10px', color: '#fbbf24', fontWeight: 'bold' }}>{item.count}x</span>
+                          {itemImg && (
+                            <img src={itemImg} alt={itemName} style={{ width: '16px', height: '16px', objectFit: 'contain', marginBottom: '1px' }} />
+                          )}
+                          <span style={{ fontSize: '8px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{itemName}</span>
+                          <span style={{ fontSize: '9px', color: '#fbbf24', fontWeight: 'bold' }}>{item.count}x</span>
                         </>
                       ) : (
                         <span style={{ fontSize: '9px', color: '#9ca3af' }}>{index + 1}</span>
@@ -711,7 +954,8 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
                   onClick={() => handleOverflowSwap(idx)}
                   style={styles.overflowSlot}
                 >
-                  <span style={styles.itemName}>{item.name}</span>
+                  <img src={item.isRecipeScroll ? '/items/recept_svitek.png' : (itemIcons[item.name] || '/items/hlina.png')} alt={item.name} style={{ width: '20px', height: '20px', objectFit: 'contain', marginBottom: '2px' }} />
+                  <span style={styles.itemName}>{item.isRecipeScroll ? 'Svitek receptu' : item.name}</span>
                   <span style={styles.itemCount}>{item.count}x</span>
                   <button 
                     style={styles.discardBtn}
@@ -765,20 +1009,103 @@ export default function PlayerDashboardMap({ gold, setGold, inventory, setInvent
         </div>
       )}
 
+      {/* 📜 MODÁLNÍ OKNO PRO DETAIL SVITKU RECEPTU */}
+      {selectedRecipeScroll && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <button onClick={() => setSelectedRecipeScroll(null)} style={styles.modalCloseX}>✕</button>
+            <img src="/recept_svitek.png" alt="Svitek" style={{ width: '60px', height: 'auto', marginBottom: '8px' }} />
+            <h3 style={{ ...styles.modalTitle, color: '#fbbf24' }}>📜 Nalezený recept</h3>
+            <p style={styles.modalText}>
+              <b>Název:</b> {selectedRecipeScroll.recipe?.title || 'Neznámý recept'}<br/>
+              <b>Požadovaný Level:</b> {selectedRecipeScroll.recipe?.required_level || 1}<br/>
+              <b>Pro koho:</b> {selectedRecipeScroll.recipe?.required_profession || 'Pro všechny'}
+            </p>
+
+            {(() => {
+              const playerLevel = Math.floor((userProfile?.exp || 0) / 1000) + 1;
+              const reqLvl = selectedRecipeScroll.recipe?.required_level || 1;
+              const reqProf = (selectedRecipeScroll.recipe?.required_profession || '').trim().toLowerCase();
+              const playerProf = (userProfile?.profession || '').trim().toLowerCase();
+              
+              const lvlOk = playerLevel >= reqLvl;
+              const profOk = !reqProf || reqProf === '' || reqProf === 'všichni' || reqProf === 'kdokoliv' || reqProf === 'nic' || playerProf === reqProf;
+              const canLearn = lvlOk && profOk;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {canLearn ? (
+                    <button 
+                      style={styles.confirmBtn} 
+                      onClick={() => handleLearnRecipeFromScroll(selectedRecipeScroll.item, selectedRecipeScroll.recipe)}
+                    >
+                      ✨ Naučit se recept
+                    </button>
+                  ) : (
+                    <p style={{ color: '#f87171', fontSize: '11px', fontWeight: 'bold' }}>
+                      ❌ Nesplňuješ požadavky pro naučení tohoto receptu. Svitek ti zůstane v inventáři.
+                    </p>
+                  )}
+                  <button style={styles.cancelBtn} onClick={() => setSelectedRecipeScroll(null)}>Zavřít</button>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {rewardModalDrops && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
             <button onClick={() => setRewardModalDrops(null)} style={styles.modalCloseX}>✕</button>
             <h3 style={styles.modalTitle}>🎉 Úspěšný nákup!</h3>
             <p style={styles.modalText}>Získal/a jsi tyto suroviny:</p>
+            
             <div style={styles.rewardListContainer}>
-              {rewardModalDrops.map((drop, i) => (
+              {rewardModalDrops.drops.map((drop, i) => (
                 <div key={i} style={styles.rewardItemRow}>
-                  <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>📦 {drop.name}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {itemIcons[drop.name] ? (
+                      <img src={itemIcons[drop.name]} alt={drop.name} style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
+                    ) : (
+                      <span>📦</span>
+                    )}
+                    <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>{drop.name}</span>
+                  </div>
                   <span style={{ color: '#4ade80', fontWeight: 'bold' }}>+{drop.count} ks</span>
                 </div>
               ))}
+
+              {/* 📜 Náhled nalezeného svitku receptu s detaily */}
+              {rewardModalDrops.recipe && (
+                <div style={{ 
+                  background: 'rgba(40, 20, 10, 0.95)', 
+                  border: '1px solid #fbbf24', 
+                  borderRadius: '6px', 
+                  marginTop: '6px', 
+                  padding: '8px',
+                  textAlign: 'left' 
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', borderBottom: '1px solid rgba(251, 191, 36, 0.3)', paddingBottom: '4px' }}>
+                    <img 
+                      src="/items/recept_svitek.png" 
+                      alt="Svitek receptu" 
+                      style={{ width: '22px', height: '22px', objectFit: 'contain' }}
+                      onError={(e) => { e.target.src = '/items/palivo.png'; }} 
+                    />
+                    <span style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: '13px' }}>Svitek receptu</span>
+                    <span style={{ color: '#4ade80', fontWeight: 'bold', fontSize: '12px', marginLeft: 'auto' }}>+1 ks</span>
+                  </div>
+                  
+                  <div style={{ fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#fef3c7', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div><b>Název:</b> {rewardModalDrops.recipe.title}</div>
+                    <div><b>Požadovaný level:</b> {rewardModalDrops.recipe.required_level || 1}</div>
+                    <div><b>Povolání:</b> {rewardModalDrops.recipe.required_profession || 'Pro všechny'}</div>
+                  </div>
+                </div>
+              )}
             </div>
+
             <button style={{ ...styles.confirmBtn, width: '100%', marginTop: '15px' }} onClick={() => setRewardModalDrops(null)}>Zavřít</button>
           </div>
         </div>
@@ -806,10 +1133,10 @@ const styles = {
   hexText: { fontFamily: 'Palatino Linotype', fontSize: '4.5px', fill: '#ffffff', fontWeight: 'bold', textShadow: '0px 1px 2px rgba(0,0,0,0.9)' },
   actionMessageBox: { background: 'rgba(15, 118, 110, 0.95)', border: '1px solid #2dd4bf', color: '#ccfbf1', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', fontFamily: 'Palatino Linotype', marginBottom: '10px', textAlign: 'center', width: '100%', fontWeight: 'bold' },
   overflowGrid: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '10px' },
-  overflowSlot: { width: '60px', height: '60px', borderRadius: '6px', border: '2px solid #ef4444', background: 'rgba(69, 10, 10, 0.95)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative' },
+  overflowSlot: { width: '65px', height: '65px', borderRadius: '6px', border: '2px solid #ef4444', background: 'rgba(69, 10, 10, 0.95)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', padding: '2px' },
   discardBtn: { position: 'absolute', top: '-4px', right: '-4px', background: '#dc2626', color: '#fff', border: '1px solid #f87171', borderRadius: '50%', width: '18px', height: '18px', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' },
-  itemName: { fontFamily: 'Palatino Linotype', fontSize: '11px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold' },
-  itemCount: { fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#fbbf24', fontWeight: 'bold' },
+  itemName: { fontFamily: 'Palatino Linotype', fontSize: '9px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' },
+  itemCount: { fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#fbbf24', fontWeight: 'bold' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   overflowModalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #ef4444', borderRadius: '12px', padding: '20px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '320px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
@@ -819,6 +1146,6 @@ const styles = {
   rewardListContainer: { display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(40, 20, 10, 0.8)', padding: '10px', borderRadius: '6px', border: '1px solid #b45309', maxHeight: '150px', overflowY: 'auto' },
   rewardItemRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontFamily: 'Palatino Linotype', padding: '4px 6px', borderBottom: '1px solid rgba(180, 83, 9, 0.4)' },
   modalButtons: { display: 'flex', justifyContent: 'center', gap: '10px' },
-  confirmBtn: { fontFamily: 'Palatino Linotype', background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#ffffff', border: '1px solid #fbbf24', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  cancelBtn: { fontFamily: 'Palatino Linotype', background: '#374151', color: '#ffffff', border: '1px solid #9ca3af', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }
+  confirmBtn: { fontFamily: 'Palatino Linotype', background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#ffffff', border: '1px solid #fbbf24', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', width: '100%' },
+  cancelBtn: { fontFamily: 'Palatino Linotype', background: '#374151', color: '#ffffff', border: '1px solid #9ca3af', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', width: '100%' }
 };
