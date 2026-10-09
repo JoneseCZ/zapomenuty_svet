@@ -50,11 +50,73 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     'Kovadlina': '/items/kovadlina.png'
   };
 
+  const getStackedInventory = (invArray) => {
+    const finalSlots = Array(totalInventorySlots).fill(null);
+    let slotIndex = 0;
+    const stackedMap = {};
+
+    (invArray || []).forEach((row) => {
+      if (!row) return;
+      
+      const itemName = row.items?.name || row.name || (row.recipe_id ? 'Svitek receptu' : null);
+      const isRecipe = row.isRecipeScroll || itemName === 'Receptový svitek' || itemName === 'Svitek receptu' || !!row.recipe_id;
+
+      if (isRecipe) {
+        if (slotIndex < totalInventorySlots) {
+          finalSlots[slotIndex] = {
+            ...row,
+            name: 'Svitek receptu',
+            image_url: '/items/recept_svitek.png',
+            max_stack: 1,
+            count: 1,
+            isRecipeScroll: true,
+            recipe_id: row.recipe_id, 
+            recipeData: row.recipeData || row.recipes || row.recipe_data
+          };
+          slotIndex++;
+        }
+        return;
+      }
+
+      const itemMaxStack = row.items?.max_stack || row.max_stack || 10;
+      if (!itemName) return;
+      const imageUrl = row.items?.image_url || row.image_url || itemIcons[itemName] || '/items/hlina.png';
+      const itemCount = Number(row.count || 1);
+
+      if (stackedMap[itemName]) {
+        stackedMap[itemName].count += itemCount;
+        if (row.id) stackedMap[itemName].originalIds.push(row.id);
+      } else {
+        stackedMap[itemName] = { 
+          ...row, 
+          name: itemName,
+          image_url: imageUrl,
+          max_stack: itemMaxStack,
+          count: itemCount,
+          originalIds: row.id ? [row.id] : []
+        };
+      }
+    });
+
+    Object.values(stackedMap).forEach((item) => {
+      while (item.count > 0 && slotIndex < totalInventorySlots) {
+        const take = Math.min(item.count, item.max_stack);
+        finalSlots[slotIndex] = { ...item, count: take };
+        item.count -= take;
+        slotIndex++;
+      }
+    });
+
+    return finalSlots;
+  };
+
+  const displayedInventory = getStackedInventory(inventory);
+
   useEffect(() => {
     if (!userProfile?.id) return;
 
     const fetchData = async () => {
-      // 1. Načtení naučených receptů hráče[cite: 16]
+      // 1. Načtení naučených receptů hráče[cite: 14]
       const { data: playerRecipes } = await supabase
         .from('player_recipes')
         .select('recipe_id')
@@ -73,7 +135,7 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
         }
       }
 
-      // 2. Načtení hotbaru dílny z DB[cite: 16]
+      // 2. Načtení hotbaru dílny z DB[cite: 14]
       fetchWorkshopHotbar();
     };
 
@@ -87,18 +149,43 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
       .eq('user_id', userProfile.id)
       .order('slot_index', { ascending: true });
 
-    const newSlots = [null, null, null, null, null];
+    const stackedMap = {};
+
+    // 1. Sloučení a sečtení stejných předmětů
     if (hotbarData) {
       hotbarData.forEach(row => {
-        if (row.slot_index >= 0) {
-          while (newSlots.length <= row.slot_index) {
-            newSlots.push(null);
-          }
-          newSlots[row.slot_index] = row;
+        const item = row.items || row;
+        const itemName = item.name;
+        const maxStack = item.max_stack !== undefined ? item.max_stack : (row.max_stack || 10);
+        const count = Number(row.count || 1);
+
+        if (stackedMap[itemName]) {
+          stackedMap[itemName].count += count;
+        } else {
+          stackedMap[itemName] = { ...row, max_stack: maxStack, count };
         }
       });
     }
-    setWorkshopHotbar(newSlots);
+
+    // 2. Dynamické rozdělení do slotů
+    const dynamicSlots = [null, null, null, null, null];
+    let slotIdx = 0;
+
+    Object.values(stackedMap).forEach(item => {
+      while (item.count > 0) {
+        const take = Math.min(item.count, item.max_stack);
+        
+        while (dynamicSlots.length <= slotIdx) {
+          dynamicSlots.push(null);
+        }
+
+        dynamicSlots[slotIdx] = { ...item, count: take };
+        item.count -= take;
+        slotIdx++;
+      }
+    });
+
+    setWorkshopHotbar(dynamicSlots);
   };
 
   const getPlayerItemCount = (itemName) => {
@@ -106,11 +193,24 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     const targetName = itemName.trim().toLowerCase();
     let total = 0;
 
+    // 1. Spočítáme kusy v hlavním inventáři
     inventory.forEach(row => {
       if (!row) return;
       const itemDetails = row.items || row;
       const currentName = (itemDetails.name || '').trim().toLowerCase();
       const count = Number(row.count || 1);
+
+      if (currentName === targetName || currentName.includes(targetName) || targetName.includes(currentName)) {
+        total += count;
+      }
+    });
+
+    // 2. Spočítáme kusy také ve workshop hotbaru
+    workshopHotbar.forEach(slot => {
+      if (!slot) return;
+      const itemDetails = slot.items || slot;
+      const currentName = (itemDetails.name || '').trim().toLowerCase();
+      const count = Number(slot.count || 1);
 
       if (currentName === targetName || currentName.includes(targetName) || targetName.includes(currentName)) {
         total += count;
@@ -159,6 +259,10 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     for (const row of inventory) {
       const item = row.items || row;
       const name = (item.name || '').toLowerCase();
+
+      // 🛡️ Ochrana: Pokud předmět nemá název, přeskočíme ho
+      if (!name) continue;
+
       if (reqText.includes(name) || (name.includes('nůž') && reqText.includes('nůž')) || (name.includes('sekera') && reqText.includes('sekera'))) {
         const durability = Number(row.durability || item.durability || 999);
         if (durability >= minDurability) return { source: 'inv', row, durabilityCost: minDurability };
@@ -168,6 +272,8 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
       if (!slot) continue;
       const item = slot.items || slot;
       const name = (item.name || '').toLowerCase();
+      if (!name) continue;
+
       if (reqText.includes(name)) {
         return { source: 'hotbar', slot, durabilityCost: minDurability };
       }
@@ -228,7 +334,7 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
       }
     }
 
-    // Simulace inventáře předem (ověření místa)
+    // 1. Simulace inventáře předem (ověření místa)
     let simulatedInventory = inventory.map(row => ({ ...row }));
 
     for (const ingStr of recipe.ingredients) {
@@ -276,12 +382,14 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
       }
     }
 
+    // 2. Fyzické odečtení surovin z inventáře nebo hotbaru v databázi
     try {
       for (const ingStr of recipe.ingredients) {
         const parsed = parseIngredientString(ingStr);
         let needed = parsed.needed;
         const targetName = parsed.name;
 
+        // A) Nejdříve bereme z hlavního inventáře
         const matchingRows = inventory.filter(row => {
           if (!row) return false;
           const itemDetails = row.items || row;
@@ -301,8 +409,30 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
             needed = 0;
           }
         }
+
+        // 👈 TENTO BLOK ZDE CHYBĚL: Odečtení ze workshop hotbaru, pokud surovina stále chybí
+        if (needed > 0) {
+          for (const slot of workshopHotbar) {
+            if (!slot || needed <= 0) continue;
+            const itemDetails = slot.items || slot;
+            const itemName = (itemDetails.name || '').trim().toLowerCase();
+
+            if (itemName === targetName || itemName.includes(targetName) || targetName.includes(itemName)) {
+              const count = Number(slot.count || 1);
+              if (count <= needed) {
+                await supabase.from('workshop_hotbar').delete().eq('id', slot.id);
+                needed -= count;
+              } else {
+                await supabase.from('workshop_hotbar').update({ count: count - needed }).eq('id', slot.id);
+                needed = 0;
+              }
+            }
+          }
+          await fetchWorkshopHotbar(); // Obnovení hotbaru po odečtení
+        }
       }
 
+      // Odečtení životnosti nástroje (pokud je vyžadován)
       const reqString = recipe.requirements || recipe.tool_requirement || '';
       const costMatch = reqString.toLowerCase().match(/\((\d+)x\s*život\)/);
       const durabilityCost = costMatch ? parseInt(costMatch[1], 10) : (recipe.durability_cost || 0);
@@ -325,6 +455,7 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
         }
       }
 
+      // Vytvoření a uložení vyrobeného předmětu do inventáře
       const existingRow = inventory.find(row => {
         if (!row) return false;
         const itemDetails = row.items || row;
@@ -344,7 +475,8 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
           user_id: userProfile.id,
           item_id: itemCatalog.id,
           count: 1,
-          durability: recipe.initial_durability || itemCatalog.initial_durability || null
+          durability: recipe.initial_durability || itemCatalog.initial_durability || null,
+          allowed_slots: recipe.allowed_slots || null
         }]);
       }
 
@@ -395,19 +527,52 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     }
   };
 
-  const moveToWorkshopHotbar = async (row) => {
+ const moveToWorkshopHotbar = async (aggRow) => {
+    const item = aggRow.items || aggRow;
+    
+    // Zjištění povolených slotů z položky nebo jejího receptu/katalogu
+const rawAllowed = item.allowed_slots || item.recipes?.allowed_slots || item.recipeData?.allowed_slots || item.items?.allowed_slots || '';
+const allowedSlots = typeof rawAllowed === 'string' 
+  ? rawAllowed.split(',').map(s => s.trim().toLowerCase()) 
+  : (Array.isArray(rawAllowed) ? rawAllowed.map(s => s.toLowerCase()) : []);
+
+const canGoToHotbar = allowedSlots.includes('hotbar') || allowedSlots.includes('workshop') || item.can_be_in_hotbar;
+
+    const itemName = item.name;
+    const itemId = aggRow.item_id || item.id;
+    // ... zbytek tvé stávající funkce pro přesun do hotbaru
+
+    const matchingRows = inventory.filter(r => {
+      if (!r) return false;
+      const rItem = r.items || r;
+      return (rItem.name || '').trim().toLowerCase() === itemName.trim().toLowerCase();
+    });
+
+    if (matchingRows.length === 0) return;
+
+    let totalCount = 0;
+    const rowIdsToDelete = [];
+    let durability = aggRow.durability;
+
+    matchingRows.forEach(r => {
+      totalCount += Number(r.count || 1);
+      rowIdsToDelete.push(r.id);
+    });
+
     const emptyIndex = workshopHotbar.findIndex(slot => slot === null);
     const targetIndex = emptyIndex === -1 ? workshopHotbar.length : emptyIndex;
 
     await supabase.from('workshop_hotbar').insert([{
       user_id: userProfile.id,
       slot_index: targetIndex,
-      item_id: row.item_id,
-      count: row.count || 1,
-      durability: row.durability
+      item_id: itemId,
+      count: totalCount,
+      durability: durability
     }]);
 
-    await supabase.from('inventory').delete().eq('id', row.id);
+    for (const id of rowIdsToDelete) {
+      await supabase.from('inventory').delete().eq('id', id);
+    }
 
     const { data } = await supabase.from('inventory').select('*, items(*)').eq('user_id', userProfile.id);
     if (data) setInventory(data);
@@ -420,7 +585,6 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     const itemName = item.name;
     const itemId = slotRow.item_id || slotRow.items?.id;
 
-    // Kontrola, zda se předmět vejde do existujícího stacku v inventáři
     const maxStackLimit = item.max_stack !== undefined ? item.max_stack : 10;
     const existingRow = inventory.find(r => {
       const rItem = r.items || r;
@@ -428,7 +592,6 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     });
 
     if (!existingRow) {
-      // Pokud se nevejde do stacku, ověříme volné místo (počet unikátních položek)
       const uniqueItemsCount = new Set(
         inventory.filter(r => r && (r.items?.name || r.name)).map(r => r.items?.name || r.name)
       ).size;
@@ -455,6 +618,12 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     setActiveHotbarMenu(null);
   };
 
+  const sellHotbarItem = async (slotRow) => {
+    if (!slotRow) return;
+    setAlertMessage('Funkce prodeje bude brzy k dispozici!');
+    setActiveHotbarMenu(null);
+  };
+
   const discardHotbarItem = async (slotRow) => {
     if (!slotRow) return;
 
@@ -463,7 +632,7 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
     setActiveHotbarMenu(null);
   };
 
-  // 📦 Agregace inventáře pro zobrazení (sloučení duplicitních řádků se stejným názvem do jednoho)
+  // 📦 Agregace inventáře pro zobrazení
   const aggregatedInventory = {};
   inventory.forEach(row => {
     if (!row) return;
@@ -475,7 +644,7 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
       aggregatedInventory[itemName] = {
         ...row,
         count: Number(row.count || 1),
-        originalRow: row // Uchováme si referenci pro akce (např. vložení do hotbaru)
+        originalRow: row
       };
     } else {
       aggregatedInventory[itemName].count += Number(row.count || 1);
@@ -504,7 +673,23 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
   const canCraftSelected = selectedRecipe && hasRequiredProfession && hasRequiredEquipment && hasEnoughIngredients;
 
   return (
-    <div style={styles.craftWrapper}>
+    <div className="craft-wrapper" style={styles.craftWrapper}>
+      <style>{`
+        @media (max-width: 900px) {
+          .craft-wrapper {
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            justify-content: flex-start !important;
+            gap: 15px !important;
+            padding-bottom: 20px !important;
+            -webkit-overflow-scrolling: touch;
+          }
+          .craft-wrapper > div {
+            flex-shrink: 0 !important;
+          }
+        }
+      `}</style>
+
       {/* 📜 LEVÁ STRANA: RECEPTY S VYHLEDÁVÁNÍM A ŘAZENÍM */}
       <div style={styles.outerScrollWrapperLeft}>
         <div style={styles.scrollPanel}>
@@ -634,29 +819,43 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
         )}
       </div>
 
-      {/* 📦 PRAVÁ STRANA: INVENTÁŘ (AGREGOVANÝ) */}
+      {/* 📦 PRAVÁ STRANA: INVENTÁŘ (SEZNAM) */}
       <div style={styles.outerScrollWrapperRight}>
         <div style={styles.scrollPanel}>
-          <h3 style={styles.scrollTitle}>Inventář ({displayInventoryRows.length}/{totalInventorySlots})</h3>
+          <h3 style={styles.scrollTitle}>Inventář ({displayedInventory.filter(Boolean).length}/{totalInventorySlots})</h3>
           <div style={styles.scrollContent}>
-            {displayInventoryRows.length === 0 ? (
+            {displayedInventory.filter(Boolean).length === 0 ? (
               <p style={{ color: '#451a03', fontSize: '12px', textAlign: 'center' }}>Prázdno</p>
             ) : (
-              displayInventoryRows.map((aggRow) => {
-                const item = aggRow.items || aggRow;
-                const itemName = item.name;
-                const itemImg = item.image_url || itemIcons[itemName];
-                const isEquipmentLike = item.category === 'vybaveni' || item.category === 'zařízení' || itemName?.toLowerCase().includes('ohniště') || itemName?.toLowerCase().includes('pec') || itemName?.toLowerCase().includes('kovadlina');
-                
+              displayedInventory.filter(Boolean).map((item, index) => {
+                const itemName = item.items?.name || item.name;
+                const itemImg = item.items?.image_url || item.image_url || itemIcons[itemName];
+                const rawAllowed = item.allowed_slots || item.recipes?.allowed_slots || item.recipeData?.allowed_slots || item.items?.allowed_slots || '';
+const allowedStr = typeof rawAllowed === 'string' ? rawAllowed.toLowerCase() : '';
+const itemNameLower = (itemName || '').toLowerCase();
+
+const isEquipmentLike = 
+  item.items?.can_be_in_hotbar === true || 
+  item.can_be_in_hotbar === true || 
+  allowedStr.includes('hotbar') || 
+  allowedStr.includes('workshop') || 
+  itemNameLower.includes('ohniště') || 
+  itemNameLower.includes('pec') || 
+  itemNameLower.includes('kovadlina') || 
+  itemNameLower.includes('sekera') || 
+  itemNameLower.includes('nůž');
+  
                 return (
-                  <div key={aggRow.id} style={styles.inventoryRow}>
+                  <div key={index} style={styles.inventoryRow}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
                       {itemImg && <img src={itemImg} alt="" style={{ width: '16px', height: '16px', objectFit: 'contain', flexShrink: 0 }} />}
-                      <span style={styles.invItemName}>• {itemName} ({aggRow.count}x) {aggRow.durability ? `[${aggRow.durability}ž]` : ''}</span>
+                      <span style={styles.invItemName}>
+                        • {itemName} ({item.count}/{item.max_stack || 10})
+                      </span>
                     </div>
                     {isEquipmentLike && (
                       <button 
-                        onClick={() => moveToWorkshopHotbar(aggRow.originalRow)}
+                        onClick={() => moveToWorkshopHotbar(item)}
                         style={styles.toHotbarBtn}
                         title="Vložit do panelu výroby"
                       >
@@ -693,13 +892,23 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
                 title={slotRow ? "Kliknutím otevřete akce" : `Prázdný slot ${idx + 1}`}
               >
                 {item ? (
-                  <div style={styles.hotbarItemContent}>
-                    <span style={styles.hotbarItemName}>{itemName}</span>
-                    {itemImg && <img src={itemImg} alt={itemName} style={styles.hotbarImage} />}
-                  </div>
-                ) : (
-                  <span style={styles.hotbarSlotNumber}>{idx + 1}</span>
-                )}
+  <div style={styles.hotbarItemContent}>
+    <span style={styles.hotbarItemName}>{itemName}</span>
+    {itemImg && <img src={itemImg} alt={itemName} style={styles.hotbarImage} />}
+    
+    <span style={styles.hotbarItemCount}>
+      {slotRow.count || 1}/{item.max_stack || 10}
+    </span>
+
+    {slotRow.durability !== null && slotRow.durability !== undefined && (
+      <span style={styles.hotbarItemDurability}>
+        {slotRow.durability}
+      </span>
+    )}
+  </div>
+) : (
+  <span style={styles.slotNumber}>{idx + 1}</span>
+)}
 
                 {/* Kontextové menu nad slotem */}
                 {isMenuOpen && (
@@ -708,7 +917,13 @@ export default function PlayerDashboardCrafting({ inventory, userProfile, setInv
                       style={styles.popupBtn} 
                       onClick={() => transferHotbarToInventory(slotRow)}
                     >
-                      Přenést do inventáře
+                      Vzít do inventáře
+                    </button>
+                    <button 
+                      style={{ ...styles.popupBtn, color: '#fbbf24' }} 
+                      onClick={() => sellHotbarItem(slotRow)}
+                    >
+                      Prodat (připravuje se)
                     </button>
                     <button 
                       style={{ ...styles.popupBtn, color: '#f87171' }} 
@@ -754,14 +969,16 @@ const styles = {
   successBox: { background: 'rgba(6, 95, 70, 0.9)', border: '1px solid #10b981', color: '#a7f3d0', padding: '4px', borderRadius: '4px', fontSize: '11px', textAlign: 'center', fontWeight: 'bold' },
   alertBox: { background: 'rgba(127, 29, 29, 0.9)', border: '1px solid #ef4444', color: '#fca5a5', padding: '4px', borderRadius: '4px', fontSize: '11px', textAlign: 'center', fontWeight: 'bold' },
   craftBtn: { fontFamily: 'Palatino Linotype', color: '#ffffff', border: '1px solid #fbbf24', padding: '8px', borderRadius: '6px', fontWeight: 'bold', fontSize: '12px', width: '100%', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' },
-  workshopHotbarContainer: { width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'rgba(20, 10, 5, 0.9)', border: '2px solid #8c6239', borderRadius: '10px', padding: '12px', marginTop: '10px', boxSizing: 'border-box' },
+  workshopHotbarContainer: { width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'transparent', border: 'none', padding: '12px', marginTop: '10px', boxSizing: 'border-box' },
   hotbarTitle: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '13px', margin: '0 0 10px 0', textAlign: 'center' },
-  hotbarSlots: { display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap', maxWidth: '100%', overflowX: 'auto', paddingBottom: '4px' },
+  hotbarSlots: { display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap', maxWidth: '100%', overflow: 'visible', paddingBottom: '4px' },
   hotbarSlot: { width: '65px', height: '65px', borderRadius: '8px', border: '2px solid #b45309', background: 'rgba(40, 25, 15, 0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', flexShrink: 0 },
   hotbarSlotNumber: { fontFamily: 'Palatino Linotype', fontSize: '14px', color: '#8c6239', fontWeight: 'bold' },
-  hotbarItemContent: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '4px', boxSizing: 'border-box' },
+  hotbarItemContent: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '4px 2px', boxSizing: 'border-box', position: 'relative' },
   hotbarItemName: { fontFamily: 'Palatino Linotype', fontSize: '9px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   hotbarImage: { width: '34px', height: '34px', objectFit: 'contain' },
+  hotbarItemCount: { position: 'absolute', bottom: '2px', left: '4px', fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#fbbf24', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
+  hotbarItemDurability: { position: 'absolute', bottom: '2px', right: '4px', fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#ef4444', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
   hotbarMenuPopup: { position: 'absolute', bottom: '70px', left: '50%', transform: 'translateX(-50%)', background: '#1a120b', border: '2px solid #b45309', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px', padding: '4px', zIndex: 50, width: '130px', boxShadow: '0 5px 15px rgba(0,0,0,0.8)' },
   popupBtn: { background: 'transparent', border: 'none', color: '#fbbf24', fontFamily: 'Palatino Linotype', fontSize: '10px', fontWeight: 'bold', padding: '4px', textAlign: 'center', cursor: 'pointer', borderRadius: '3px' }
 };

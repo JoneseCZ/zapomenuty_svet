@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { supabase } from './App'; // Ujisti se, že cesta k supabase odpovídá tvému projektu
+import { supabase } from './App';
 
-// 🗺️ Jednotný slovník ikonek
 const itemIcons = {
   'Hlína': '/items/hlina.png',
   'Klacek': '/items/klacek.png',
@@ -37,7 +36,8 @@ const itemIcons = {
   'Surová hmota': '/items/surova_hmota.png',
   'Pevný provázek': '/items/pevny_provázek.png',
   'Receptový svitek': '/items/recept_svitek.png',
-  'Svitek receptu': '/items/recept_svitek.png'
+  'Svitek receptu': '/items/recept_svitek.png',
+  'Kamenná sekera': '/items/kamenna_sekera.png'
 };
 
 export default function PlayerDashboardInventory({ 
@@ -53,7 +53,6 @@ export default function PlayerDashboardInventory({
   const [alertModalMessage, setAlertModalMessage] = useState(null);
   const [knownRecipeIds, setKnownRecipeIds] = useState(new Set());
 
-  // 📜 Načtení receptů, které už hráč umí z tabulky player_recipes
   useEffect(() => {
     if (!userProfile?.id) return;
     const fetchKnownRecipes = async () => {
@@ -129,34 +128,40 @@ export default function PlayerDashboardInventory({
     return finalSlots;
   };
 
-   const displayedInventory = getStackedInventory();
+  const displayedInventory = getStackedInventory();
 
-  const handleActionDiscard = () => {
-    if (!inventoryActionModal) return;
-    onDiscardItem(inventoryActionModal.item);
+  const handleActionDiscard = async () => {
+    if (!inventoryActionModal || !inventoryActionModal.item) return;
+    
+    const itemToDiscard = inventoryActionModal.item;
+    const idToDelete = (itemToDiscard.originalIds && itemToDiscard.originalIds.length > 0) 
+      ? itemToDiscard.originalIds[0] 
+      : itemToDiscard.id;
+
+    if (idToDelete) {
+      await supabase.from('inventory').delete().eq('id', idToDelete);
+      setInventory(prev => prev.filter(invItem => invItem.id !== idToDelete));
+    }
+    
     setInventoryActionModal(null);
   };
 
- // 📜 Pomocná funkce pro bezpečný výpis ID v chybové hlášce
-  const targetTypeOrId = (id) => {
-    return typeof id === 'object' ? JSON.stringify(id) : (id || 'žádné');
-  };
-
-  // 📜 Kliknutí na položku v inventáři
   const handleItemClick = async (index, item) => {
     if (!item) return;
     
     let targetItem = { ...item };
-    
-    // Vytáhneme ID receptu ze sloupce recipe_id (může to být string nebo objekt relace)
     let rawRecipeId = targetItem.recipe_id;
     if (typeof rawRecipeId === 'object' && rawRecipeId !== null) {
       rawRecipeId = rawRecipeId.id;
     }
     const recipeIdToFetch = (typeof rawRecipeId === 'string' ? rawRecipeId : '').trim();
+    
+    const itemName = targetItem.items?.name || targetItem.name;
+    const isActuallyRecipe = targetItem.isRecipeScroll || itemName === 'Receptový svitek' || itemName === 'Svitek receptu' || !!recipeIdToFetch;
 
-    if (recipeIdToFetch) {
-      // Stáhneme detail receptu z tabulky recipes pomocí ID z inventory.recipe_id
+    targetItem.isRecipeScroll = isActuallyRecipe;
+
+    if (isActuallyRecipe && recipeIdToFetch) {
       const { data: recipeDef, error } = await supabase
         .from('recipes')
         .select('*')
@@ -166,16 +171,12 @@ export default function PlayerDashboardInventory({
       if (!error && recipeDef) {
         targetItem.recipeData = recipeDef;
         targetItem.recipe_id = recipeDef.id;
-      } else {
-        console.error("Nepodařilo se načíst recept z tabulky recipes pro ID:", recipeIdToFetch, error);
       }
     }
     
-    targetItem.isRecipeScroll = true;
     setInventoryActionModal({ index, item: targetItem });
   };
 
-  // 📜 Logika pro naučení receptu z inventáře (zcela přímočaře)
   const handleLearnRecipe = async (itemToLearn) => {
     const targetItem = itemToLearn || inventoryActionModal?.item;
     if (!targetItem) {
@@ -183,7 +184,6 @@ export default function PlayerDashboardInventory({
       return;
     }
 
-    // Zjistíme user_id
     let userId = userProfile?.user_id || userProfile?.id;
     if (!userId) {
       const { data: { session } } = await supabase.auth.getSession();
@@ -195,7 +195,6 @@ export default function PlayerDashboardInventory({
       return;
     }
 
-    // Zkusíme vzít recept z předpřipravených dat v položce
     let recipe = targetItem.recipeData || targetItem.recipes || targetItem.recipe_data;
 
     if (!recipe && targetItem.recipe_id) {
@@ -214,13 +213,11 @@ export default function PlayerDashboardInventory({
     }
 
     if (!recipe || !recipe.id) {
-      setAlertModalMessage(`Nepodařilo se najít recept v databázi. ID svitku: ${targetItem.recipe_id || 'žádné'}`);
+      setAlertModalMessage(`Nepodařilo se najít recept v databázi.`);
       return;
     }
 
-    // 🛑 1. KONTROLA: Zda už hráč tento recept náhodou nezná (přes lokální set nebo rovnou z DB)
     const alreadyKnownLocally = knownRecipeIds && knownRecipeIds.has(recipe.id);
-    
     let alreadyKnownInDb = false;
     if (!alreadyKnownLocally) {
       const { data: existingRecipe } = await supabase
@@ -230,53 +227,28 @@ export default function PlayerDashboardInventory({
         .eq('recipe_id', recipe.id)
         .maybeSingle();
       
-      if (existingRecipe) {
-        alreadyKnownInDb = true;
-      }
+      if (existingRecipe) alreadyKnownInDb = true;
     }
 
     if (alreadyKnownLocally || alreadyKnownInDb) {
-      setAlertModalMessage(`⚠️ Tento recept už umíš!\nSvitek ti zůstane v inventáři, můžeš ho prodat nebo vyhodit.`);
+      setAlertModalMessage(`⚠️ Tento recept už umíš!\nSvitek ti zůstane v inventáři.`);
       setInventoryActionModal(null);
-      return; // Ukončíme funkci, takže svitek se NESMAŽE
-    }
-
-    // 🛑 2. KONTROLA: Level a povolání
-    const playerExp = userProfile?.exp || 0;
-    const playerLevel = Math.floor(playerExp / 1000) + 1;
-    const requiredLevel = recipe.required_level || 1;
-    const requiredProf = (recipe.required_profession || '').trim().toLowerCase();
-    const playerProf = (userProfile?.profession || '').trim().toLowerCase();
-
-    const levelMet = playerLevel >= requiredLevel;
-    const profMet = !requiredProf || requiredProf === '' || requiredProf === 'všichni' || requiredProf === 'kdokoliv' || requiredProf === 'nic' || playerProf === requiredProf;
-
-    if (!levelMet || !profMet) {
-      setAlertModalMessage(`Nesplňuješ podmínky pro tento recept!\nPožadovaný level: ${requiredLevel} (máš ${playerLevel})\nPožadované povolání: ${recipe.required_profession || 'Všichni'}`);
       return;
     }
 
     try {
-      // 3. Uložíme do tabulky player_recipes
       const { error: learnErr } = await supabase
         .from('player_recipes')
         .insert([{ user_id: userId, recipe_id: recipe.id }]);
 
       if (learnErr) {
-        // Pojistka pro případ konfliktu unikátního klíče
-        if (learnErr.code === '23505' || learnErr.message.includes('unique') || learnErr.message.includes('duplicate') || learnErr.message.includes('Conflict')) {
-          setAlertModalMessage(`⚠️ Tento recept už umíš!\nSvitek ti zůstane v inventáři.`);
-          setInventoryActionModal(null);
-          return;
-        }
-        console.error('Chyba při učení receptu:', learnErr.message);
+        setAlertModalMessage(`⚠️ Tento recept už umíš!`);
+        setInventoryActionModal(null);
         return;
       }
 
-      // Lokálně aktualizujeme seznam známých receptů
       setKnownRecipeIds(prev => new Set([...prev, recipe.id]));
 
-      // 4. Smažeme svitek z inventáře POUZE TEHDY, KDYŽ SE HO ÚSPĚŠNĚ NAUČIL
       const deleteId = targetItem.id || (targetItem.originalIds && targetItem.originalIds[0]);
       if (deleteId) {
         await supabase.from('inventory').delete().eq('id', deleteId);
@@ -289,7 +261,92 @@ export default function PlayerDashboardInventory({
       console.error('Chyba při učení:', err);
     }
   };
-  
+
+  // 🎛️ Zjištění povolených slotů (allowed_slots) s chytrou zálohou pro nástroje
+  const getSelectedAllowedSlots = () => {
+    if (!inventoryActionModal || !inventoryActionModal.item) return [];
+    const item = inventoryActionModal.item;
+    const itemName = (item.name || item.items?.name || '').toLowerCase();
+    
+    const rawAllowed = item.allowed_slots || item.recipes?.allowed_slots || item.recipeData?.allowed_slots || item.items?.allowed_slots || '';
+    let slots = typeof rawAllowed === 'string' 
+      ? rawAllowed.split(',').map(s => s.trim().toLowerCase()) 
+      : (Array.isArray(rawAllowed) ? rawAllowed.map(s => s.toLowerCase()) : []);
+      
+    // Pojistka pro nástroje a vybavení, aby vždy nabídly hotbar/ruku
+    if (itemName.includes('sekera') || itemName.includes('nůž') || itemName.includes('ohniště') || itemName.includes('pec') || itemName.includes('kovadlina')) {
+      if (!slots.includes('hotbar')) slots.push('hotbar');
+      if (!slots.includes('workshop')) slots.push('workshop');
+      if (!slots.includes('hand')) slots.push('hand');
+    }
+    return slots;
+  };
+
+  const allowedSlots = getSelectedAllowedSlots();
+  const canGoToHotbar = allowedSlots.includes('hotbar') || allowedSlots.includes('workshop');
+  const canGoToHand = allowedSlots.includes('hand') || allowedSlots.includes('ruka');
+
+  const handleMoveToHotbarFromInventory = async () => {
+    if (!inventoryActionModal || !inventoryActionModal.item) return;
+    const item = inventoryActionModal.item;
+    
+    // Zjistíme user_id bezpečně
+    let userId = userProfile?.user_id || userProfile?.id;
+    if (!userId) {
+      const { data: { session } } = await supabase.auth.getSession();
+      userId = session?.user?.id;
+    }
+
+    if (!userId) {
+      setAlertModalMessage("Chyba: Nepodařilo se ověřit přihlášeného hráče.");
+      return;
+    }
+
+    const itemId = item.item_id || item.items?.id || null;
+    const count = item.count || 1;
+    const durability = item.durability || null;
+
+    // 1. Načteme obsazené sloty v hotbaru
+    const { data: hotbarData } = await supabase
+      .from('workshop_hotbar')
+      .select('slot_index')
+      .eq('user_id', userId);
+
+    const usedIndices = new Set((hotbarData || []).map(h => h.slot_index));
+    let targetIndex = 0;
+    while (usedIndices.has(targetIndex)) {
+      targetIndex++;
+    }
+
+    // 2. Vložíme do workshop_hotbar
+    const insertPayload = {
+      user_id: userId,
+      slot_index: targetIndex,
+      count: count,
+      durability: durability
+    };
+    
+    if (itemId) {
+      insertPayload.item_id = itemId;
+    }
+
+    const { error: insertErr } = await supabase.from('workshop_hotbar').insert([insertPayload]);
+    if (insertErr) {
+      console.error('Chyba při vkládání do hotbaru:', insertErr.message);
+      setAlertModalMessage('Chyba při přesunu do hotbaru: ' + insertErr.message);
+      return;
+    }
+
+    // 3. Smažeme z inventáře
+    const idToDelete = (item.originalIds && item.originalIds.length > 0) ? item.originalIds[0] : item.id;
+    if (idToDelete) {
+      await supabase.from('inventory').delete().eq('id', idToDelete);
+      setInventory(prev => prev.filter(invItem => invItem.id !== idToDelete));
+    }
+
+    setInventoryActionModal(null);
+  };
+
   return (
     <div style={styles.inventoryContainer}>
       <div style={styles.inventoryHeader}>
@@ -321,6 +378,12 @@ export default function PlayerDashboardInventory({
                   <span style={styles.itemCount}>
                     {item.count}/{item.max_stack || 10}
                   </span>
+
+                  {item.durability !== null && item.durability !== undefined && (
+                    <span style={styles.itemDurability}>
+                      {item.durability}
+                    </span>
+                  )}
                 </div>
               ) : (
                 <span style={styles.slotNumber}>{index + 1}</span>
@@ -357,7 +420,7 @@ export default function PlayerDashboardInventory({
               </div>
             ) : ( 
               <p style={{ color: '#d1d5db', fontSize: '13px', fontFamily: 'Palatino Linotype', marginBottom: '15px' }}>
-                Celkové množství: {inventoryActionModal.item.count}x
+                Celkové množství: {inventoryActionModal.item.count}x {inventoryActionModal.item.durability ? ` | Životnost: ${inventoryActionModal.item.durability}` : ''}
               </p>
             )}
 
@@ -387,6 +450,25 @@ export default function PlayerDashboardInventory({
                     </button>
                   )}
                 </>
+              )}
+
+              {/* Tlačítka podle povolených slotů */}
+              {canGoToHotbar && (
+                <button 
+                  onClick={handleMoveToHotbarFromInventory} 
+                  style={{ ...styles.closeModalBtn, background: 'linear-gradient(to bottom, #b45309, #78350f)' }}
+                >
+                  🔥 Vložit do hotbaru
+                </button>
+              )}
+
+              {canGoToHand && (
+                <button 
+                  onClick={() => setAlertModalMessage('Funkce nasazení do ruky se připravuje.')} 
+                  style={{ ...styles.closeModalBtn, background: 'linear-gradient(to bottom, #047857, #065f46)' }}
+                >
+                  ✋ Nasadit do ruky
+                </button>
               )}
 
               <button 
@@ -427,7 +509,8 @@ const styles = {
   inventoryItemContent: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '4px 2px', boxSizing: 'border-box', position: 'relative' },
   itemName: { fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#ffffff', textAlign: 'center', fontWeight: 'bold', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   itemImage: { width: '42px', height: '42px', objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' },
-  itemCount: { position: 'absolute', bottom: '3px', left: '5px', fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#fbbf24', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
+  itemCount: { position: 'absolute', bottom: '2px', left: '4px', fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#fbbf24', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
+  itemDurability: { position: 'absolute', bottom: '2px', right: '4px', fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#ef4444', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
   inventoryHint: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#fef08a', textAlign: 'center', maxWidth: '440px', margin: '10px 0 0 0', lineHeight: '1.4', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
