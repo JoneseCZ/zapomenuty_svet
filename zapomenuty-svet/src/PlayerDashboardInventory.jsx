@@ -53,6 +53,23 @@ export default function PlayerDashboardInventory({
   const [alertModalMessage, setAlertModalMessage] = useState(null);
   const [knownRecipeIds, setKnownRecipeIds] = useState(new Set());
 
+  // Stavy pro žádost o materiál a nápovědu z tabulki items
+  const [requestItemName, setRequestItemName] = useState('');
+  const [requestItemCount, setRequestItemCount] = useState('');
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [availableItemsDb, setAvailableItemsDb] = useState([]);
+
+  // Načtení seznamu všech předmětů z tabulky items pro autocomplete
+  useEffect(() => {
+    const fetchAvailableItems = async () => {
+      const { data, error } = await supabase.from('items').select('name');
+      if (!error && data) {
+        setAvailableItemsDb(data.map(i => i.name));
+      }
+    };
+    fetchAvailableItems();
+  }, []);
+
   useEffect(() => {
     if (!userProfile?.id) return;
     const fetchKnownRecipes = async () => {
@@ -67,6 +84,61 @@ export default function PlayerDashboardInventory({
     };
     fetchKnownRecipes();
   }, [userProfile?.id, inventory]);
+
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const fetchPendingRequests = async () => {
+      let userId = userProfile?.user_id || userProfile?.id;
+      const { data } = await supabase
+        .from('item_requests')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status', 'pending');
+      if (data) setPendingRequests(data);
+    };
+    fetchPendingRequests();
+  }, [userProfile?.id]);
+
+  const handleSendMaterialRequest = async () => {
+    if (!requestItemName.trim() || !requestItemCount) {
+      setAlertModalMessage("Vyplň název suroviny a požadovaný počet.");
+      return;
+    }
+
+    let userId = userProfile?.user_id || userProfile?.id;
+    if (!userId) {
+      const { data: { session } } = await supabase.auth.getSession();
+      userId = session?.user?.id;
+    }
+
+    if (!userId) {
+      setAlertModalMessage("Chyba: Nepodařilo se ověřit přihlášeného hráče.");
+      return;
+    }
+
+    const { error } = await supabase.from('item_requests').insert([{
+      user_id: userId,
+      item_name: requestItemName.trim(),
+      count: parseInt(requestItemCount),
+      status: 'pending'
+    }]);
+
+    if (!error) {
+      setAlertModalMessage("Žádost o materiál byla úspěšně odeslána administrátorovi.");
+      setRequestItemName('');
+      setRequestItemCount('');
+      
+      const { data } = await supabase
+        .from('item_requests')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status', 'pending');
+      if (data) setPendingRequests(data);
+    } else {
+      console.error('Chyba při odesílání žádosti:', error.message);
+      setAlertModalMessage("Chyba při odesílání žádosti: " + error.message);
+    }
+  };
 
   const getStackedInventory = () => {
     const finalSlots = Array(totalInventorySlots).fill(null);
@@ -262,7 +334,6 @@ export default function PlayerDashboardInventory({
     }
   };
 
-  // 🎛️ Zjištění povolených slotů (allowed_slots) s chytrou zálohou pro nástroje
   const getSelectedAllowedSlots = () => {
     if (!inventoryActionModal || !inventoryActionModal.item) return [];
     const item = inventoryActionModal.item;
@@ -273,7 +344,6 @@ export default function PlayerDashboardInventory({
       ? rawAllowed.split(',').map(s => s.trim().toLowerCase()) 
       : (Array.isArray(rawAllowed) ? rawAllowed.map(s => s.toLowerCase()) : []);
       
-    // Pojistka pro nástroje a vybavení, aby vždy nabídly hotbar/ruku
     if (itemName.includes('sekera') || itemName.includes('nůž') || itemName.includes('ohniště') || itemName.includes('pec') || itemName.includes('kovadlina')) {
       if (!slots.includes('hotbar')) slots.push('hotbar');
       if (!slots.includes('workshop')) slots.push('workshop');
@@ -290,7 +360,6 @@ export default function PlayerDashboardInventory({
     if (!inventoryActionModal || !inventoryActionModal.item) return;
     const item = inventoryActionModal.item;
     
-    // Zjistíme user_id bezpečně
     let userId = userProfile?.user_id || userProfile?.id;
     if (!userId) {
       const { data: { session } } = await supabase.auth.getSession();
@@ -306,7 +375,6 @@ export default function PlayerDashboardInventory({
     const count = item.count || 1;
     const durability = item.durability || null;
 
-    // 1. Načteme obsazené sloty v hotbaru
     const { data: hotbarData } = await supabase
       .from('workshop_hotbar')
       .select('slot_index')
@@ -318,7 +386,6 @@ export default function PlayerDashboardInventory({
       targetIndex++;
     }
 
-    // 2. Vložíme do workshop_hotbar
     const insertPayload = {
       user_id: userId,
       slot_index: targetIndex,
@@ -337,7 +404,6 @@ export default function PlayerDashboardInventory({
       return;
     }
 
-    // 3. Smažeme z inventáře
     const idToDelete = (item.originalIds && item.originalIds.length > 0) ? item.originalIds[0] : item.id;
     if (idToDelete) {
       await supabase.from('inventory').delete().eq('id', idToDelete);
@@ -347,55 +413,128 @@ export default function PlayerDashboardInventory({
     setInventoryActionModal(null);
   };
 
+  // Filtrování předmětů pro autocomplete podle toho, co hráč píše
+  const filteredSuggestions = requestItemName.trim() 
+    ? availableItemsDb.filter(i => i.toLowerCase().startsWith(requestItemName.trim().toLowerCase()) && i.toLowerCase() !== requestItemName.trim().toLowerCase())
+    : [];
+
   return (
     <div style={styles.inventoryContainer}>
-      <div style={styles.inventoryHeader}>
-        <span style={styles.inventoryCapacity}>
-          Kapacita: {totalInventorySlots} slotů (Základ 10 + Batoh)
-        </span>
-      </div>
+      <div style={styles.inventoryContentRow}>
+        <div style={styles.gridWrapper}>
+          
+          {/* HLAVIČKA S KAPACITOU PŘÍMO NAD MŘÍŽKOU */}
+          <div style={styles.inventoryHeader}>
+            <span style={styles.inventoryCapacity}>
+              Kapacita: {totalInventorySlots} slotů (Základ 10 + Batoh)
+            </span>
+          </div>
 
-      <div style={styles.inventoryGrid}>
-        {Array.from({ length: totalInventorySlots }).map((_, index) => {
-          const item = displayedInventory[index];
-          return (
-            <div 
-              key={index} 
-              style={styles.inventorySlot}
-              onClick={() => handleItemClick(index, item)}
-            >
-              {item ? (
-                <div style={styles.inventoryItemContent}>
-                  <span style={styles.itemName}>{item.isRecipeScroll ? 'Svitek receptu' : item.name}</span>
+          <div style={styles.inventoryGrid}>
+            {Array.from({ length: totalInventorySlots }).map((_, index) => {
+              const item = displayedInventory[index];
+              return (
+                <div 
+                  key={index} 
+                  style={styles.inventorySlot}
+                  onClick={() => handleItemClick(index, item)}
+                >
+                  {item ? (
+                    <div style={styles.inventoryItemContent}>
+                      <span style={styles.itemName}>{item.isRecipeScroll ? 'Svitek receptu' : item.name}</span>
 
-                  <img 
-                    src={item.image_url} 
-                    alt={item.name} 
-                    style={styles.itemImage}
-                    onError={(e) => { e.target.src = '/items/palivo.png'; }} 
-                  />
+                      <img 
+                        src={item.image_url} 
+                        alt={item.name} 
+                        style={styles.itemImage}
+                        onError={(e) => { e.target.src = '/items/palivo.png'; }} 
+                      />
 
-                  <span style={styles.itemCount}>
-                    {item.count}/{item.max_stack || 10}
-                  </span>
+                      <span style={styles.itemCount}>
+                        {item.count}/{item.max_stack || 10}
+                      </span>
 
-                  {item.durability !== null && item.durability !== undefined && (
-                    <span style={styles.itemDurability}>
-                      {item.durability}
-                    </span>
+                      {item.durability !== null && item.durability !== undefined && (
+                        <span style={styles.itemDurability}>
+                          {item.durability}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span style={styles.slotNumber}>{index + 1}</span>
                   )}
                 </div>
-              ) : (
-                <span style={styles.slotNumber}>{index + 1}</span>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+
+          <p style={styles.inventoryHint}>
+            Kliknutím na předmět v inventáři zobrazíš možnosti (vyhození, naučení receptu).
+          </p>
+        </div>
+
+        {/* 📦 KOMPAKTNÍ PANEL ŽÁDOSTÍ S AUTOCOMPLETE */}
+        <div style={styles.requestSidePanel}>
+          <h4 style={styles.requestTitle}>
+            📦 Žádost o materiál
+          </h4>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', position: 'relative' }}>
+            <input 
+              type="text" 
+              placeholder="Název (např. Klacek)" 
+              value={requestItemName}
+              onChange={(e) => setRequestItemName(e.target.value)}
+              style={styles.requestInput}
+            />
+
+            {/* Rozbalovací nápověda (Autocomplete) */}
+            {filteredSuggestions.length > 0 && (
+              <div style={styles.autocompleteDropdown}>
+                {filteredSuggestions.slice(0, 5).map((suggestion, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setRequestItemName(suggestion)}
+                    style={styles.autocompleteItem}
+                  >
+                    {suggestion}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <input 
+              type="number" 
+              min="1" 
+              placeholder="Počet" 
+              value={requestItemCount}
+              onChange={(e) => setRequestItemCount(e.target.value)}
+              style={styles.requestInput}
+            />
+            <button 
+              onClick={handleSendMaterialRequest}
+              style={styles.requestBtn}
+            >
+              Odeslat adminovi
+            </button>
+          </div>
+
+          <div style={{ marginTop: '8px', borderTop: '1px solid #78350f', paddingTop: '6px' }}>
+            <p style={{ color: '#fbbf24', fontSize: '10px', fontFamily: 'Palatino Linotype', margin: '0 0 3px 0', fontWeight: 'bold' }}>
+              ⏳ Čeká na ověření:
+            </p>
+            {pendingRequests.length === 0 ? (
+              <p style={{ color: '#9ca3af', fontSize: '9px', fontFamily: 'Palatino Linotype', margin: '0' }}>Žádné žádosti.</p>
+            ) : (
+              <ul style={{ margin: '0', paddingLeft: '12px', color: '#d1d5db', fontSize: '9px', fontFamily: 'Palatino Linotype', maxHeight: '100px', overflowY: 'auto' }}>
+                {pendingRequests.map((req, i) => (
+                  <li key={i}>{req.item_name} ({req.count}x)</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </div>
-      
-      <p style={styles.inventoryHint}>
-        Kliknutím na předmět v inventáři zobrazíš možnosti (vyhození, naučení receptu).
-      </p>
 
       {inventoryActionModal && (
         <div style={styles.modalOverlay}>
@@ -452,7 +591,6 @@ export default function PlayerDashboardInventory({
                 </>
               )}
 
-              {/* Tlačítka podle povolených slotů */}
               {canGoToHotbar && (
                 <button 
                   onClick={handleMoveToHotbarFromInventory} 
@@ -500,10 +638,13 @@ export default function PlayerDashboardInventory({
 }
 
 const styles = {
-  inventoryContainer: { display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'center', padding: '0', boxSizing: 'border-box' },
-  inventoryHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '10px' },
-  inventoryCapacity: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '14px', fontWeight: 'bold' },
-  inventoryGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 75px)', gap: '10px', width: '100%', maxWidth: '440px', justifyContent: 'center', marginBottom: '15px' },
+  inventoryContainer: { display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '900px', margin: '0 auto', alignItems: 'center', padding: '0 20px', boxSizing: 'border-box' },
+  inventoryHeader: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', width: '100%', maxWidth: '415px', textAlign: 'center' },
+  inventoryCapacity: { fontFamily: 'Palatino Linotype', color: '#fbbf24', fontSize: '14px', fontWeight: 'bold', width: '100%', textAlign: 'center' },
+  
+  inventoryContentRow: { display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', boxSizing: 'border-box' },
+  gridWrapper: { display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, margin: '0 auto' },
+  inventoryGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 75px)', gap: '10px', justifyContent: 'center', marginBottom: '10px' },
   inventorySlot: { width: '75px', height: '75px', borderRadius: '8px', border: '2px solid #78716c', background: 'rgba(40, 40, 40, 0.95)', boxShadow: 'inset 0 0 8px rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', cursor: 'pointer', boxSizing: 'border-box' },
   slotNumber: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#d1c7bd', fontWeight: 'bold' },
   inventoryItemContent: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '4px 2px', boxSizing: 'border-box', position: 'relative' },
@@ -511,7 +652,16 @@ const styles = {
   itemImage: { width: '42px', height: '42px', objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' },
   itemCount: { position: 'absolute', bottom: '2px', left: '4px', fontFamily: 'Palatino Linotype', fontSize: '10px', color: '#fbbf24', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
   itemDurability: { position: 'absolute', bottom: '2px', right: '4px', fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#ef4444', fontWeight: 'bold', textShadow: '0 1px 2px rgba(0,0,0,0.9)' },
-  inventoryHint: { fontFamily: 'Palatino Linotype', fontSize: '13px', color: '#fef08a', textAlign: 'center', maxWidth: '440px', margin: '10px 0 0 0', lineHeight: '1.4', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
+  inventoryHint: { fontFamily: 'Palatino Linotype', fontSize: '12px', color: '#fef08a', textAlign: 'center', maxWidth: '440px', margin: '5px 0 0 0', lineHeight: '1.3', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.9)' },
+  
+  requestSidePanel: { background: 'rgba(30, 15, 5, 0.9)', border: '2px solid #b45309', borderRadius: '10px', padding: '12px', width: '220px', boxSizing: 'border-box', boxShadow: '0 4px 12px rgba(0,0,0,0.8)', flexShrink: 0 },
+  requestTitle: { color: '#fbbf24', fontSize: '12px', fontFamily: 'Palatino Linotype', margin: '0 0 8px 0', textAlign: 'center', fontWeight: 'bold' },
+  requestInput: { background: '#1c0a02', border: '1px solid #78350f', color: '#fff', padding: '5px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'Palatino Linotype', width: '100%', boxSizing: 'border-box' },
+  requestBtn: { background: 'linear-gradient(to bottom, #d97706, #b45309)', color: '#fff', border: '1px solid #fbbf24', padding: '6px', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontFamily: 'Palatino Linotype', fontSize: '11px', width: '100%', marginTop: '4px' },
+
+  autocompleteDropdown: { position: 'absolute', top: '30px', left: 0, width: '100%', background: '#1c0a02', border: '1px solid #b45309', borderRadius: '4px', zIndex: 10, maxHeight: '100px', overflowY: 'auto', boxSizing: 'border-box' },
+  autocompleteItem: { padding: '5px 8px', fontSize: '11px', fontFamily: 'Palatino Linotype', color: '#d1d5db', cursor: 'pointer', borderBottom: '1px solid #78350f' },
+
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalBox: { position: 'relative', background: '#1c0a02', border: '2px solid #f59e0b', borderRadius: '12px', padding: '24px', width: '380px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.9)' },
   modalCloseX: { position: 'absolute', top: '10px', right: '12px', background: 'transparent', color: '#fbbf24', border: 'none', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer' },

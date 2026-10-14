@@ -8,6 +8,7 @@ import PlayerDashboardRecipes from './PlayerDashboardRecipes';
 import PlayerDashboardQuests from './PlayerDashboardQuests';
 import PlayerDashboardMessages from './PlayerDashboardMessages';
 import { usePlayerProfessions, ProfessionModal } from './PlayerDashboardProfessions';
+import PlayerDashboardAuction from './PlayerDashboardAuction';
 
 const formatDate = (dateObj = new Date()) => {
   try {
@@ -463,6 +464,7 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
           {renderNavButton('oznamovatel', 'Oznámovatel')}
           {renderNavButton('ukoly', 'Úkoly', hasUnreadQuests)}
           {renderNavButton('mapa', 'Mapa')}
+          {renderNavButton('aukce', 'Aukční síň')}
         </div>
 
         {/* VYKRESLOVÁNÍ JEDNOTLIVÝCH ZÁLOŽEK */}
@@ -515,6 +517,23 @@ export default function PlayerDashboard({ userProfile, onLogout }) {
             userProfile={userProfile}
           />
         )}
+
+        {activeTab === 'aukce' && (
+  <PlayerDashboardAuction 
+    session={userProfile} 
+    inventory={inventory} 
+    setInventory={setInventory} 
+    userProfile={{ ...userProfile, gold }}
+    setUserProfile={(updated) => {
+      if (typeof updated === 'function') {
+        const newProf = updated({ ...userProfile, gold });
+        if (newProf?.gold !== undefined) setGold(newProf.gold);
+      } else if (updated?.gold !== undefined) {
+        setGold(updated.gold);
+      }
+    }}
+  />
+)}
 
         {activeTab === 'recepty' && <PlayerDashboardRecipes userProfile={userProfile} />}
         {activeTab === 'ukoly' && <PlayerDashboardQuests userProfile={userProfile} />}
@@ -622,7 +641,7 @@ const styles = {
   nameValueMobile: { fontFamily: 'Palatino Linotype', fontSize: '20px', color: '#ffffff', fontWeight: 'bold', textShadow: '0px 2px 6px rgba(0,0,0,0.9)', letterSpacing: '1px', textAlign: 'center' },
   goldContainer: { display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(30, 15, 5, 0.95)', padding: '4px 10px', borderRadius: '12px', border: '1px solid #f59e0b', boxShadow: '0 2px 4px rgba(0,0,0,0.5)', zIndex: 2 },
   goldText: { fontFamily: 'Palatino Linotype', fontSize: '14px', color: '#fcd34d', fontWeight: 'bold' },
-  goldIcon: { width: '18px', height: '18px', objectFit: 'contain' },
+  goldIcon: { width: '28px', height: '28px', objectFit: 'contain', transform: 'scale(1.2)', transformOrigin: 'center' },
   mainContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '100%' },
   navigationContainer: { display: 'flex', gap: '8px', marginBottom: '10px', justifyContent: 'center', width: '100%', flexWrap: 'nowrap' },
   navButton: { fontFamily: 'Palatino Linotype', backgroundImage: 'url(/tlacitko-pozad.png)', backgroundSize: '100% 100%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: 'transparent', filter: 'brightness(0.65) contrast(1.3)', color: '#1c0a02', border: 'none', outline: 'none', padding: '10px 16px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap', transition: 'all 0.2s' },

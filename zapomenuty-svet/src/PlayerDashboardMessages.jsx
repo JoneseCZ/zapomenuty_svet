@@ -8,9 +8,19 @@ export default function PlayerDashboardMessages({ session, supabase }) {
   const [notifications, setNotifications] = useState([]);
   const [players, setPlayers] = useState([]);
   
+  // Stavy pro fórum
+  const [threads, setThreads] = useState([]);
+  const [selectedThreadId, setSelectedThreadId] = useState(null);
+  const [threadPosts, setThreadPosts] = useState([]);
+  const [newThreadTitle, setNewThreadTitle] = useState('');
+  const [newThreadContent, setNewThreadContent] = useState('');
+  const [newPostContent, setNewPostContent] = useState('');
+  const [isCreatingThread, setIsCreatingThread] = useState(false);
+
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [messageContent, setMessageContent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [modalMessage, setModalMessage] = useState(null); // Hezké oznámení
 
   useEffect(() => {
     if (session?.id) {
@@ -21,7 +31,6 @@ export default function PlayerDashboardMessages({ session, supabase }) {
   }, [session]);
 
   const fetchData = async () => {
-    // 1. Načtení profilů
     const { data: profilesData } = await supabase
       .from('profiles')
       .select('id, nickname')
@@ -33,7 +42,6 @@ export default function PlayerDashboardMessages({ session, supabase }) {
     profilesData.forEach(p => { profileMap[p.id] = p.nickname; });
     profileMap[session.id] = session.nickname || 'Já';
 
-    // 2. Načtení zpráv
     const { data: msgData } = await supabase
       .from('private_messages')
       .select('*')
@@ -50,7 +58,6 @@ export default function PlayerDashboardMessages({ session, supabase }) {
       setMessages(enrichedMessages);
     }
 
-    // 3. Načtení oznámení od admina
     const { data: notifData } = await supabase
       .from('admin_notifications')
       .select('*')
@@ -59,6 +66,37 @@ export default function PlayerDashboardMessages({ session, supabase }) {
 
     if (notifData) {
       setNotifications(notifData);
+    }
+
+    const { data: threadsData } = await supabase
+      .from('forum_threads')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (threadsData) {
+      const enrichedThreads = threadsData.map(t => ({
+        ...t,
+        author_name: profileMap[t.author_id] || 'Neznámý'
+      }));
+      setThreads(enrichedThreads);
+      if (enrichedThreads.length > 0 && !selectedThreadId) {
+        setSelectedThreadId(enrichedThreads[0].id);
+      }
+    }
+
+    if (selectedThreadId) {
+      const { data: postsData } = await supabase
+        .from('forum_posts')
+        .select('*')
+        .eq('thread_id', selectedThreadId)
+        .order('created_at', { ascending: true });
+
+      if (postsData) {
+        setThreadPosts(postsData.map(p => ({
+          ...p,
+          author_name: profileMap[p.author_id] || 'Neznámý'
+        })));
+      }
     }
 
     const lastActivityMap = {};
@@ -96,19 +134,39 @@ export default function PlayerDashboardMessages({ session, supabase }) {
     }
   };
 
+  useEffect(() => {
+    if (!selectedThreadId) return;
+    const fetchPosts = async () => {
+      const { data: profilesData } = await supabase.from('profiles').select('id, nickname');
+      const profileMap = {};
+      if (profilesData) profilesData.forEach(p => { profileMap[p.id] = p.nickname; });
+      profileMap[session.id] = session.nickname || 'Já';
+
+      const { data: postsData } = await supabase
+        .from('forum_posts')
+        .select('*')
+        .eq('thread_id', selectedThreadId)
+        .order('created_at', { ascending: true });
+
+      if (postsData) {
+        setThreadPosts(postsData.map(p => ({
+          ...p,
+          author_name: profileMap[p.author_id] || 'Neznámý'
+        })));
+      }
+    };
+    fetchPosts();
+  }, [selectedThreadId]);
+
   const handleSelectUser = async (userId) => {
     setSelectedUserId(userId);
 
-    const { error } = await supabase
+    await supabase
       .from('private_messages')
       .update({ is_read: true })
       .eq('sender_id', userId)
       .eq('recipient_id', session.id)
       .eq('is_read', false);
-
-    if (error) {
-      console.error('Chyba při aktualizaci stavu zpráv:', error.message);
-    }
 
     setMessages(prev => prev.map(m => 
       (m.sender_id === userId && m.recipient_id === session.id) ? { ...m, is_read: true } : m
@@ -118,7 +176,6 @@ export default function PlayerDashboardMessages({ session, supabase }) {
     ));
   };
 
-  // Označení oznámení jako přečtená při přepnutí na záložku oznámení
   const handleTabChange = async (tab) => {
     setActiveTab(tab);
     if (tab === 'notifications') {
@@ -158,11 +215,132 @@ export default function PlayerDashboardMessages({ session, supabase }) {
       setMessageContent('');
       fetchData();
     } else {
-      alert('Chyba při odesílání zprávy: ' + error.message);
+      setModalMessage('Chyba při odesílání zprávy: ' + error.message);
     }
   };
 
-  // Vykřičník svítí, pokud je nepřečtená zpráva NEBO nepřečtené admin oznámení
+  // Vyzvednutí předmětu bez chyby 406
+  // Vyzvednutí předmětu do inventáře bez chyby "e is not defined"
+  const handleClaimAttachment = async (notification) => {
+    if (!notification.item_data) return;
+
+    setLoading(true);
+
+    const itemToClaim = notification.item_data;
+    // Získáme id předmětu z dostupných struktur
+    const rawItemId = itemToClaim.item_id || (itemToClaim.items && itemToClaim.items.id) || itemToClaim.id;
+    const countToAdd = itemToClaim.count || 1;
+
+    if (!rawItemId) {
+      setLoading(false);
+      setModalMessage("Chyba: Nepodařilo se určit ID předmětu.");
+      return;
+    }
+
+    // Dotaz na stávající řádek v inventáři
+    const { data: existingSlots, error: selectErr } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('user_id', session.id)
+      .eq('item_id', rawItemId);
+
+    if (selectErr) {
+      setLoading(false);
+      setModalMessage("Chyba při načítání inventáře: " + selectErr.message);
+      return;
+    }
+
+    const existingSlot = existingSlots && existingSlots.length > 0 ? existingSlots[0] : null;
+
+    let updateErr = null;
+
+    if (existingSlot) {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ count: (existingSlot.count || 1) + countToAdd })
+        .eq('id', existingSlot.id);
+      updateErr = error;
+    } else {
+      const { error } = await supabase.from('inventory').insert([{
+        user_id: session.id,
+        item_id: rawItemId,
+        count: countToAdd
+      }]);
+      updateErr = error;
+    }
+
+    if (updateErr) {
+      setLoading(false);
+      setModalMessage("Chyba při vkládání předmětu do inventáře: " + updateErr.message);
+      return;
+    }
+
+    // Vymazání přílohy ze zprávy po úspěšném připsání
+    await supabase
+      .from('admin_notifications')
+      .update({ item_data: null })
+      .eq('id', notification.id);
+
+    setLoading(false);
+    setModalMessage(`Předmět '${itemToClaim.name || 'Předmět'}' (${countToAdd}x) byl úspěšně přesunut do tvého inventáře!`);
+    fetchData();
+  };
+
+  const handleCreateThread = async (e) => {
+    e.preventDefault();
+    if (!newThreadTitle.trim() || !newThreadContent.trim()) return;
+
+    setLoading(true);
+    const { data: threadData, error: threadErr } = await supabase
+      .from('forum_threads')
+      .insert([{ title: newThreadTitle.trim(), author_id: session.id }])
+      .select()
+      .single();
+
+    if (threadErr || !threadData) {
+      setLoading(false);
+      setModalMessage('Chyba při zakládání vlákna: ' + (threadErr?.message || 'Neznámá'));
+      return;
+    }
+
+    const { error: postErr } = await supabase
+      .from('forum_posts')
+      .insert([{ thread_id: threadData.id, author_id: session.id, content: newThreadContent.trim() }]);
+
+    setLoading(false);
+    if (!postErr) {
+      setNewThreadTitle('');
+      setNewThreadContent('');
+      setIsCreatingThread(false);
+      setSelectedThreadId(threadData.id);
+      fetchData();
+    } else {
+      setModalMessage('Chyba při vytváření úvodního příspěvku: ' + postErr.message);
+    }
+  };
+
+  const handleSendPost = async (e) => {
+    e.preventDefault();
+    if (!selectedThreadId || !newPostContent.trim()) return;
+
+    setLoading(true);
+    const { error } = await supabase.from('forum_posts').insert([
+      {
+        thread_id: selectedThreadId,
+        author_id: session.id,
+        content: newPostContent.trim()
+      }
+    ]);
+
+    setLoading(false);
+    if (!error) {
+      setNewPostContent('');
+      fetchData();
+    } else {
+      setModalMessage('Chyba při odesílání příspěvku: ' + error.message);
+    }
+  };
+
   const hasUnreadMessages = messages.some(msg => msg.recipient_id === session.id && !msg.is_read);
   const hasUnreadNotifications = notifications.some(notif => !notif.is_read);
   const hasAnyUnread = hasUnreadMessages || hasUnreadNotifications;
@@ -192,7 +370,7 @@ export default function PlayerDashboardMessages({ session, supabase }) {
               ✕
             </button>
 
-            <h2 style={styles.modalTitle}>Pošta a oznámení</h2>
+            <h2 style={styles.modalTitle}>Pošta, oznámení a fórum</h2>
             
             <div style={styles.tabHeader}>
               <button 
@@ -203,6 +381,15 @@ export default function PlayerDashboardMessages({ session, supabase }) {
                 }}
               >
                 Soukromá pošta
+              </button>
+              <button 
+                onClick={() => handleTabChange('forum')}
+                style={{
+                  ...styles.tabBtn,
+                  ...(activeTab === 'forum' ? styles.tabBtnActive : styles.tabBtnInactive)
+                }}
+              >
+                📜 Veřejné fórum
               </button>
               <button 
                 onClick={() => handleTabChange('notifications')}
@@ -283,6 +470,113 @@ export default function PlayerDashboardMessages({ session, supabase }) {
                     </form>
                   </div>
                 </div>
+              ) : activeTab === 'forum' ? (
+                <div style={styles.chatLayout}>
+                  <div style={styles.chatSidebar}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <h4 style={{ ...styles.sidebarTitle, margin: 0 }}>Vlákna</h4>
+                      <button 
+                        onClick={() => setIsCreatingThread(!isCreatingThread)}
+                        style={styles.newThreadBtn}
+                        title="Založit nové vlákno"
+                      >
+                        {isCreatingThread ? '✕' : '+ Nové'}
+                      </button>
+                    </div>
+
+                    <div style={styles.playerList}>
+                      {threads.map(thread => {
+                        const isSelected = thread.id === selectedThreadId && !isCreatingThread;
+                        return (
+                          <div 
+                            key={thread.id}
+                            onClick={() => { setIsCreatingThread(false); setSelectedThreadId(thread.id); }}
+                            style={{
+                              ...styles.playerItem,
+                              ...(isSelected ? styles.playerItemActive : {})
+                            }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📜 {thread.title}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={styles.chatMain}>
+                    {isCreatingThread ? (
+                      <form onSubmit={handleCreateThread} style={{ display: 'flex', flexDirection: 'column', gap: '8px', height: '100%', justifyContent: 'center' }}>
+                        <h4 style={styles.sectionTitle}>Založit nové diskusní vlákno</h4>
+                        <input 
+                          type="text"
+                          placeholder="Název vlákna..."
+                          value={newThreadTitle}
+                          onChange={(e) => setNewThreadTitle(e.target.value)}
+                          style={styles.chatInput}
+                          required
+                        />
+                        <textarea 
+                          placeholder="Obsah úvodního příspěvku..."
+                          value={newThreadContent}
+                          onChange={(e) => setNewThreadContent(e.target.value)}
+                          style={{ ...styles.chatInput, height: '100px', resize: 'none' }}
+                          required
+                        />
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button type="submit" disabled={loading} style={styles.chatSendBtn}>
+                            {loading ? 'Ukládám...' : 'Založit vlákno'}
+                          </button>
+                          <button type="button" onClick={() => setIsCreatingThread(false)} style={{ ...styles.chatSendBtn, background: '#6b7280' }}>
+                            Zrušit
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div style={styles.messageHistoryContainer}>
+                          {threadPosts.length === 0 ? (
+                            <p style={styles.emptyText}>Žádné příspěvky ve vlákně.</p>
+                          ) : (
+                            threadPosts.map(post => {
+                              const isMe = post.author_id === session.id;
+                              return (
+                                <div 
+                                  key={post.id} 
+                                  style={{
+                                    ...styles.messageBubble,
+                                    maxWidth: '90%',
+                                    alignSelf: isMe ? 'flex-end' : 'flex-start',
+                                    background: isMe ? 'rgba(180, 83, 9, 0.2)' : 'rgba(255, 255, 255, 0.75)'
+                                  }}
+                                >
+                                  <div style={styles.bubbleHeader}>
+                                    <span>🛡️ {post.author_name}</span>
+                                    <span style={{ fontSize: '9px', opacity: 0.7 }}>{new Date(post.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                  </div>
+                                  <p style={styles.bubbleBody}>{post.content}</p>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        <form onSubmit={handleSendPost} style={styles.chatForm}>
+                          <input 
+                            type="text"
+                            value={newPostContent}
+                            onChange={(e) => setNewPostContent(e.target.value)}
+                            placeholder="Napište příspěvek do diskuze..."
+                            style={styles.chatInput}
+                            required
+                          />
+                          <button type="submit" disabled={loading} style={styles.chatSendBtn}>
+                            {loading ? '...' : 'Odeslat'}
+                          </button>
+                        </form>
+                      </>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <div style={{ overflowY: 'auto', height: '100%', paddingRight: '5px' }}>
                   <h4 style={styles.sectionTitle}>Zásahy a oznámení administrátora</h4>
@@ -292,21 +586,68 @@ export default function PlayerDashboardMessages({ session, supabase }) {
                     notifications.map(notif => (
                       <div key={notif.id} style={styles.notificationCard}>
                         <div style={styles.messageCardHeader}>
-                          <span>Zásah správce</span>
+                          <span>Zásah správce / Banka</span>
                           <span>{new Date(notif.created_at).toLocaleString()}</span>
                         </div>
                         <p style={styles.messageCardBody}>{notif.message}</p>
-                        {notif.amount !== 0 && (
-                          <span style={{ color: notif.amount > 0 ? '#10b981' : '#ef4444', fontWeight: 'bold', fontSize: '12px' }}>
-                            Množství: {notif.amount > 0 ? `+${notif.amount}` : notif.amount}
-                          </span>
-                        )}
+                        
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                          {notif.amount !== 0 && (
+                            <span style={{ color: notif.amount > 0 ? '#10b981' : '#ef4444', fontWeight: 'bold', fontSize: '12px' }}>
+                              Množství: {notif.amount > 0 ? `+${notif.amount}` : notif.amount} 🪙
+                            </span>
+                          )}
+
+                          {notif.item_data && (
+                            <button 
+                              onClick={() => handleClaimAttachment(notif)}
+                              disabled={loading}
+                              style={{
+                                background: 'linear-gradient(to bottom, #047857, #065f46)',
+                                color: '#fff',
+                                border: '1px solid #34d399',
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                fontWeight: 'bold',
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              🎁 Vzít do inventáře ({notif.item_data.name || 'Předmět'} {notif.item_data.count ? `${notif.item_data.count}x` : ''})
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* HEZKÉ TÉMATICKÉ MODAL OKNO MÍSTO SKAREDÉHO ALERTU */}
+      {modalMessage && (
+        <div style={styles.infoModalOverlay}>
+          <div style={styles.infoModalBox}>
+            <p style={{ color: '#fff', fontSize: '13px', margin: '0 0 15px 0', fontFamily: 'Palatino Linotype' }}>{modalMessage}</p>
+            <button 
+              onClick={() => setModalMessage(null)} 
+              style={{
+                background: 'linear-gradient(to bottom, #d97706, #b45309)',
+                color: '#fff',
+                border: '1px solid #fbbf24',
+                padding: '6px 16px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                fontFamily: 'Palatino Linotype'
+              }}
+            >
+              Rozumím
+            </button>
           </div>
         </div>
       )}
@@ -359,7 +700,7 @@ const styles = {
     backgroundRepeat: 'no-repeat',
     backgroundColor: 'transparent',
     padding: '55px 45px 45px 45px',
-    width: '750px',
+    width: '780px',
     maxWidth: '95vw',
     height: '82vh',
     maxHeight: '680px',
@@ -395,16 +736,16 @@ const styles = {
   tabHeader: {
     display: 'flex',
     justifyContent: 'center',
-    gap: '15px',
+    gap: '10px',
     marginBottom: '12px'
   },
   tabBtn: {
-    padding: '8px 18px',
+    padding: '6px 14px',
     borderRadius: '6px',
     cursor: 'pointer',
     fontWeight: 'bold',
     fontFamily: 'Palatino Linotype',
-    fontSize: '14px',
+    fontSize: '13px',
     transition: 'all 0.2s',
     display: 'flex',
     alignItems: 'center'
@@ -434,7 +775,7 @@ const styles = {
     overflow: 'hidden'
   },
   chatSidebar: {
-    width: '210px',
+    width: '220px',
     display: 'flex',
     flexDirection: 'column',
     background: 'rgba(255, 248, 220, 0.4)',
@@ -450,6 +791,16 @@ const styles = {
     margin: '0 0 6px 0',
     textAlign: 'center'
   },
+  newThreadBtn: {
+    background: '#b45309',
+    color: '#fff',
+    border: '1px solid #78350f',
+    borderRadius: '4px',
+    fontSize: '10px',
+    fontWeight: 'bold',
+    padding: '2px 6px',
+    cursor: 'pointer'
+  },
   playerList: {
     overflowY: 'auto',
     flex: 1,
@@ -461,7 +812,7 @@ const styles = {
     padding: '6px 8px',
     borderRadius: '4px',
     cursor: 'pointer',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: 'bold',
     color: '#3d2314',
     backgroundColor: 'rgba(255, 253, 240, 0.6)',
@@ -585,5 +936,20 @@ const styles = {
     fontSize: '13px',
     color: '#2c1810',
     wordBreak: 'break-word'
+  },
+  infoModalOverlay: {
+    position: 'fixed',
+    top: 0, left: 0, width: '100vw', height: '100vh',
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 2000
+  },
+  infoModalBox: {
+    background: '#1c0a02',
+    border: '2px solid #f59e0b',
+    borderRadius: '10px',
+    padding: '20px',
+    width: '320px',
+    textAlign: 'center'
   }
 };
